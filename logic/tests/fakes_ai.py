@@ -1,0 +1,85 @@
+"""Deterministic stand-ins for the AI employees (no model or network calls)."""
+
+from dataclasses import dataclass, field
+
+from cognitive_mesh.agents.schemas import (
+    CommandIntent,
+    Insight,
+    PostDraft,
+    ResearchFindings,
+    ReviewVerdict,
+)
+from cognitive_mesh.research.sources import SearchHit, SourceRegistry
+from cognitive_mesh.workflows.content_pipeline import ContentPipeline
+
+
+def verdict(approved: bool = True, changes: list[str] | None = None) -> ReviewVerdict:
+    return ReviewVerdict(
+        approved=approved,
+        accuracy=5 if approved else 2,
+        relevance=5,
+        quality=4,
+        formatting=5,
+        required_changes=changes or [],
+    )
+
+
+def draft(text: str = "Agentic AI is moving fast.", sources: list[str] | None = None) -> PostDraft:
+    return PostDraft(text=text, hashtags=["AgenticAI"], source_ids=sources or ["S1"])
+
+
+@dataclass
+class FakeTeam:
+    action: str = "linkedin_post"
+    insight_ids: list[str] = field(default_factory=lambda: ["S1", "S2"])
+    drafts: list[PostDraft] = field(default_factory=lambda: [draft()])
+    verdicts: list[ReviewVerdict] = field(default_factory=lambda: [verdict()])
+    research_error: Exception | None = None
+    writer_feedback: list[list[str]] = field(default_factory=list)
+    profiles: list[str] = field(default_factory=list)
+    explicit_research: bool = False
+    research_modes: list[str] = field(default_factory=list)
+
+    # --- employee protocols ---
+    async def analyze(self, command: str) -> CommandIntent:
+        return CommandIntent(action=self.action, topic=command, explicit_research=self.explicit_research)  # type: ignore[arg-type]
+
+    async def research(self, intent, profile, registry: SourceRegistry) -> ResearchFindings:  # type: ignore[no-untyped-def]
+        self.profiles.append(profile)
+        if self.research_error:
+            raise self.research_error
+        registry.add(SearchHit("https://news.example/a", "Agents ship", "Example News", "2026-11-16"), "fake")
+        registry.add(SearchHit("https://blog.example/b", "Agent frameworks", "Example Blog"), "fake")
+        return ResearchFindings(
+            summary="Agents are shipping.",
+            insights=[Insight(claim="Agents ship widely.", source_ids=self.insight_ids)],
+        )
+
+    async def write(self, intent, profile, findings, registry, feedback) -> PostDraft:  # type: ignore[no-untyped-def]
+        self.writer_feedback.append(list(feedback))
+        return self.drafts[min(len(self.writer_feedback) - 1, len(self.drafts) - 1)]
+
+    async def review(self, intent, d, findings, registry) -> ReviewVerdict:  # type: ignore[no-untyped-def]
+        i = len(self.writer_feedback) - 1
+        return self.verdicts[min(i, len(self.verdicts) - 1)]
+
+    def pipeline(self, max_rounds: int = 2) -> ContentPipeline:
+        return ContentPipeline(
+            intent=self,
+            quick_researcher=_Tagged(self, "quick"),
+            deep_researcher=_Tagged(self, "deep"),
+            writer=self,
+            reviewer=self,
+            max_review_rounds=max_rounds,
+        )
+
+
+class _Tagged:
+    """Records which research path the pipeline chose, then delegates to the team."""
+
+    def __init__(self, team: "FakeTeam", mode: str) -> None:
+        self._team, self._mode = team, mode
+
+    async def research(self, intent, profile, registry):  # type: ignore[no-untyped-def]
+        self._team.research_modes.append(self._mode)
+        return await self._team.research(intent, profile, registry)

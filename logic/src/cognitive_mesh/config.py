@@ -22,6 +22,30 @@ class Settings(BaseSettings):
     # Clerk: used to verify session tokens and to read verified user profiles.
     clerk_secret_key: str = ""
 
+    # Public URL of the Next.js app; Composio sends users back here after OAuth.
+    frontend_url: str = "http://localhost:3000"
+
+    # Composio project API key (server-side only, never sent to the browser).
+    composio_api_key: str = ""
+    # How long a started connection may take before its callback is refused.
+    connection_attempt_ttl_minutes: int = 30
+
+    # Secret for HMAC-signing approvals (>= 32 chars). Rotating it invalidates
+    # every unexecuted approval, which is the safe failure mode.
+    approval_signing_key: str = ""
+
+    # --- AI employees ---
+    google_api_key: str = ""
+    llm_model: str = "gemini-4-hydrogen"
+    # "composio" (keyless, default) or "gemini" (Google Search grounding; needs billing).
+    search_provider: str = "composio"
+    # Background runner that picks up QUEUED executions (off in tests).
+    run_worker: bool = True
+    worker_poll_seconds: float = 2.0
+    max_review_rounds: int = 2
+    # LangGraph checkpoints live in their OWN SQLite file, separate from app records.
+    checkpoint_db_path: str = (PROJECT_ROOT / "data" / "checkpoints.db").as_posix()
+
     # Async SQLAlchemy URL. SQLite for now; a postgresql+psycopg URL later.
     database_url: str = f"sqlite+aiosqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
     database_echo: bool = False

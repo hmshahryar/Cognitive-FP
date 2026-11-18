@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shadcn": {
+      "command": "cmd",
+      "args": ["/c", "npm", "--prefix", "visual", "run", "--silent", "mcp:shadcn"]
+    }
+  }
+}

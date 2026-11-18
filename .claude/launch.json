@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["--directory", "logic", "run", "uvicorn", "cognitive_mesh.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+      "port": 8000,
+      "url": "http://127.0.0.1:8000"
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "visual", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

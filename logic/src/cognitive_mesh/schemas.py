@@ -27,3 +27,42 @@ class WorkspaceOut(BaseModel):
 class MeOut(BaseModel):
     user: UserOut
     workspace: WorkspaceOut
+
+
+# ---------- Connector Hub ----------
+class ConnectorOut(BaseModel):
+    slug: str
+    name: str
+    logo_url: str | None
+    description: str | None
+    category: str
+    available: bool
+    connected: bool
+    status: str | None
+    display_name: str | None
+    connected_at: datetime | None
+    # Consent record: what the user allowed on the app's own consent screen.
+    granted_scopes: list[str]
+    permissions: list[str]
+    consented_at: datetime | None
+
+
+class ConnectorListOut(BaseModel):
+    connectors: list[ConnectorOut]
+    # True when Composio was unreachable and stored state is shown instead.
+    degraded: bool
+
+
+class ConnectStartOut(BaseModel):
+    redirect_url: str
+
+
+class ConnectCallbackIn(BaseModel):
+    attempt_id: uuid.UUID
+    # Echoed from Composio's redirect; only checked against our record, never trusted.
+    connected_account_id: str | None = None
+
+
+class ConnectCallbackOut(BaseModel):
+    outcome: str  # connected | pending | failed
+    connector: ConnectorOut

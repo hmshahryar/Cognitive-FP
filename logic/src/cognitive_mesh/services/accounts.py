@@ -3,10 +3,10 @@
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cognitive_mesh.auth import VerifiedIdentity
+from cognitive_mesh.db.dialect import upsert_insert as _insert
 from cognitive_mesh.models import User, Workspace
 from cognitive_mesh.services.clerk_profiles import ProfileFetcher
 
@@ -15,16 +15,6 @@ from cognitive_mesh.services.clerk_profiles import ProfileFetcher
 class Account:
     user: User
     workspace: Workspace
-
-
-def _insert(session: AsyncSession, model: type):  # type: ignore[no-untyped-def]
-    """Dialect-specific INSERT that supports ON CONFLICT DO NOTHING."""
-    dialect = session.get_bind().dialect.name
-    if dialect == "sqlite":
-        return sqlite.insert(model)
-    if dialect == "postgresql":
-        return postgresql.insert(model)
-    raise NotImplementedError(f"Unsupported database dialect: {dialect}")
 
 
 async def _get_user(session: AsyncSession, clerk_user_id: str) -> User | None:

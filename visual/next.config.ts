@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  images: {
+    // App logos served by Composio for the Connector Hub.
+    remotePatterns: [{ protocol: "https", hostname: "logos.composio.dev" }],
+  },
   turbopack: {
     rules: {
       "*.css": {
