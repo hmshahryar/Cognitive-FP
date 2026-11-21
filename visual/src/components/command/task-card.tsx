@@ -11,7 +11,7 @@ const LABEL: Record<TaskStatus, string> = {
   RUNNING: "In progress",
   AWAITING_APPROVAL: "Needs your approval",
   APPROVED: "Approved",
-  EXECUTING: "Publishing",
+  EXECUTING: "Running",
   COMPLETED: "Completed",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
@@ -60,6 +60,9 @@ export function TaskCard({
           {LABEL[task.status]}
         </span>
       </div>
+      {task.route_label && (
+        <p className="text-xs text-muted-foreground">Routed to {task.route_label}</p>
+      )}
       <div className="flex items-center justify-between gap-2">
         <time className="text-xs text-muted-foreground" dateTime={task.created_at}>
           {new Date(task.created_at).toLocaleString()}

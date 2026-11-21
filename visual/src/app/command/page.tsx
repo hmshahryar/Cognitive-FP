@@ -129,7 +129,7 @@ async function ChatView({ chatId }: { chatId: string }) {
               )}
               {t.status === "APPROVED" && (
                 <p className="text-xs text-muted-foreground" aria-live="polite">
-                  Approved. Publishing now…
+                  Approved. Working on it now…
                 </p>
               )}
               <PublicationStatus publication={publications[i].at(-1)} />
@@ -160,8 +160,8 @@ async function CommandCenter({ searchParams }: { searchParams: Search }) {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">What should your AI team do?</h1>
             <p className="text-sm text-muted-foreground">
-              Say where to post, then give your exact text, ask for a post, or ask for research
-              first. Anything that posts will wait for your approval.
+              Post to LinkedIn, handle Gmail, schedule on Google Calendar, or read and write
+              Google Sheets. Anything that posts, sends or changes data waits for your approval.
             </p>
           </div>
           <CommandComposer chatId={null} />

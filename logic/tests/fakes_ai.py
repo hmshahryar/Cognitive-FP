@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 
 from cognitive_mesh.agents.schemas import (
     CommandIntent,
+    EmailDraft,
     Insight,
+    ManagerDecision,
     PostDraft,
     ResearchFindings,
     ReviewVerdict,
@@ -44,6 +46,15 @@ class FakeTeam:
     profiles: list[str] = field(default_factory=list)
     explicit_research: bool = False
     previous_texts: list[str | None] = field(default_factory=list)
+    manager_calls: list[str] = field(default_factory=list)
+    manager_decision: ManagerDecision | None = None
+    manager_error: Exception | None = None
+    writer_contexts: list[str] = field(default_factory=list)
+    summaries: list[dict] = field(default_factory=list)
+    email_calls: list[dict] = field(default_factory=list)
+    email_drafts: list[EmailDraft] = field(
+        default_factory=lambda: [EmailDraft(subject="Project update", body="The work is on track.")]
+    )
     review_calls: int = 0
     reviewed_pages: list[dict[str, str]] = field(default_factory=list)
 
@@ -62,9 +73,10 @@ class FakeTeam:
             insights=[Insight(claim="Agents ship widely.", source_ids=self.insight_ids)],
         )
 
-    async def write(self, intent, profile, findings, registry, feedback, previous_text=None) -> PostDraft:  # type: ignore[no-untyped-def]
+    async def write(self, intent, profile, findings, registry, feedback, previous_text=None, context="") -> PostDraft:  # type: ignore[no-untyped-def]
         self.writer_feedback.append(list(feedback))
         self.previous_texts.append(previous_text)
+        self.writer_contexts.append(context)
         return self.drafts[min(len(self.writer_feedback) - 1, len(self.drafts) - 1)]
 
     async def review(self, intent, d, findings, registry, pages=None) -> ReviewVerdict:  # type: ignore[no-untyped-def]
@@ -73,9 +85,28 @@ class FakeTeam:
         i = len(self.writer_feedback) - 1
         return self.verdicts[min(i, len(self.verdicts) - 1)]
 
+    async def write_email(self, request, feedback, previous_text, context="") -> EmailDraft:  # type: ignore[no-untyped-def]
+        self.email_calls.append(
+            {"request": request, "feedback": list(feedback), "previous": previous_text, "context": context}
+        )
+        return self.email_drafts[min(len(self.email_calls) - 1, len(self.email_drafts) - 1)]
+
+    async def decide(self, message: str) -> ManagerDecision:
+        self.manager_calls.append(message)
+        if self.manager_error:
+            raise self.manager_error
+        return self.manager_decision or ManagerDecision(target="unsupported")
+
+    async def summarize(self, previous: str, transcript: str) -> str:
+        self.summaries.append({"previous": previous, "transcript": transcript})
+        return f"summary {len(self.summaries)}"
+
     def pipeline(self, max_rounds: int = 2, page_reader=None) -> ContentPipeline:  # type: ignore[no-untyped-def]
         return ContentPipeline(
             page_reader=page_reader,
+            email_writer=self,
+            summarizer=self,
+            manager=self,
             intent=self,
             researcher=_Delegate(self),
             writer=self,

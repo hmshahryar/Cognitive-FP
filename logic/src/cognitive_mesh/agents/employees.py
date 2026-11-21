@@ -24,6 +24,9 @@ from cognitive_mesh.agents.llm import call_with_retry, is_transient
 from cognitive_mesh.agents.schemas import (
     LINKEDIN_MAX_CHARS,
     CommandIntent,
+    ConversationSummary,
+    EmailDraft,
+    ManagerDecision,
     PostDraft,
     ResearchFindings,
     ReviewVerdict,
@@ -70,6 +73,7 @@ class Writer(Protocol):
         registry: SourceRegistry,
         feedback: list[str],
         previous_text: str | None = None,
+        context: str = "",
     ) -> PostDraft: ...
 
 
@@ -188,6 +192,7 @@ class ContentEmployee:
         registry: SourceRegistry,
         feedback: list[str],
         previous_text: str | None = None,
+        context: str = "",
     ) -> PostDraft:
         findings_text = "\n".join(
             f"- {i.claim} [{', '.join(i.source_ids)}]" for i in findings.insights
@@ -197,6 +202,8 @@ class ContentEmployee:
             f"Request: {intent.topic}\nConstraints: {intent.instructions or 'none'}\n"
             f"Author profile: {profile}"
         )
+        if context:
+            user += f"\n\n{prompts.CONTEXT_RULE}\n<<<\n{context}\n>>>"
         if has_research:
             user += (
                 f"\n\nResearch summary: {findings.summary}\n"
@@ -225,6 +232,54 @@ class ContentEmployee:
             ("user", user),
         ]
         return await call_with_retry(lambda: self._llm.ainvoke(messages))  # type: ignore[return-value]
+
+
+class EmailEmployee:
+    """Writes subject and body only. It has no tools and never sees mailbox content."""
+
+    def __init__(self, model: BaseChatModel) -> None:
+        self._llm = model.with_structured_output(EmailDraft, method="json_schema")
+
+    async def write_email(
+        self, request: str, feedback: list[str], previous_text: str | None, context: str = ""
+    ) -> EmailDraft:
+        user = f"Request: {request}"
+        if context:
+            user += f"\n\n{prompts.CONTEXT_RULE}\n<<<\n{context}\n>>>"
+        if previous_text:
+            user += f"\n\nPrevious email:\n<<<\n{previous_text}\n>>>"
+        if feedback:
+            user += "\n\nRevise it. Keep what works and fix these:\n- " + "\n- ".join(feedback)
+        messages = [("system", prompts.EMAIL), ("user", user)]
+        return await call_with_retry(lambda: self._llm.ainvoke(messages))  # type: ignore[return-value]
+
+
+class ManagerAgent:
+    """Chooses the specialist for a message. It has no tools and cannot act."""
+
+    def __init__(self, model: BaseChatModel) -> None:
+        self._llm = model.with_structured_output(ManagerDecision, method="json_schema")
+
+    async def decide(self, message: str) -> ManagerDecision:
+        messages = [("system", prompts.MANAGER), ("user", message)]
+        # No retries: if this fails, routing immediately falls back to plain rules.
+        return await self._llm.ainvoke(messages)  # type: ignore[return-value]
+
+
+class ConversationSummarizer:
+    """Compacts older chat messages. It has no tools."""
+
+    def __init__(self, model: BaseChatModel) -> None:
+        self._llm = model.with_structured_output(ConversationSummary, method="json_schema")
+
+    async def summarize(self, previous: str, transcript: str) -> str:
+        user = (
+            f"Existing summary:\n{previous or '(none)'}\n\n"
+            f"New messages:\n<<<\n{transcript}\n>>>"
+        )
+        messages = [("system", prompts.SUMMARY), ("user", user)]
+        result = await call_with_retry(lambda: self._llm.ainvoke(messages))
+        return result.summary  # type: ignore[union-attr]
 
 
 class ReviewEmployee:

@@ -1,7 +1,11 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Pages that only signed-in users may open (others are redirected to sign in).
-const isProtectedRoute = createRouteMatcher(["/connectors(.*)", "/command(.*)"]);
+const isProtectedRoute = createRouteMatcher([
+  "/connectors(.*)",
+  "/command(.*)",
+  "/memory(.*)",
+]);
 
 export default clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) await auth.protect();

@@ -55,6 +55,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                   >
                     Connectors
                   </Link>
+                  <Link
+                    href="/memory"
+                    className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    Memory
+                  </Link>
                 </Show>
               </Suspense>
             </nav>

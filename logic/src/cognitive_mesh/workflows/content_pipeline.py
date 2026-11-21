@@ -12,14 +12,16 @@ the LangGraph graph in workflows/linkedin_graph.py, which adds checkpoints and a
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from cognitive_mesh.agents.employees import IntentAnalyzer, Researcher, Reviewer, Writer
 from cognitive_mesh.agents.errors import CitationError, ResearchFailedError
-from cognitive_mesh.agents.quality import check_post
+from cognitive_mesh.agents.quality import check_post, email_problems
 from cognitive_mesh.agents.schemas import (
     LINKEDIN_MAX_CHARS,
     CommandIntent,
+    EmailDraft,
+    ManagerDecision,
     PostDraft,
     ResearchFindings,
     ReviewVerdict,
@@ -29,6 +31,7 @@ from cognitive_mesh.db.base import utcnow
 from cognitive_mesh.integrations.gateway import IntegrationUnavailableError, ToolExecutionError
 from cognitive_mesh.research.providers import PageReader
 from cognitive_mesh.research.sources import Source, SourceRegistry
+from cognitive_mesh.services.errors import ConfigurationError
 
 EventSink = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -40,6 +43,20 @@ SCORE_FIELDS = {
 
 
 StopCheck = Callable[[], Awaitable[bool]]
+
+
+class EmailWriter(Protocol):
+    async def write_email(
+        self, request: str, feedback: list[str], previous_text: str | None, context: str = ""
+    ) -> EmailDraft: ...
+
+
+class Summarizer(Protocol):
+    async def summarize(self, previous: str, transcript: str) -> str: ...
+
+
+class RouteManager(Protocol):
+    async def decide(self, message: str) -> ManagerDecision: ...
 
 
 class WorkflowStopped(Exception):
@@ -140,8 +157,14 @@ class ContentPipeline:
         reviewer: Reviewer,
         max_review_rounds: int = 2,
         page_reader: PageReader | None = None,
+        email_writer: EmailWriter | None = None,
+        summarizer: Summarizer | None = None,
+        manager: RouteManager | None = None,
     ) -> None:
+        self._manager = manager
         self._page_reader = page_reader
+        self._email_writer = email_writer
+        self._summarizer = summarizer
         self._intent = intent
         self._researcher = researcher
         self._writer = writer
@@ -209,6 +232,8 @@ class ContentPipeline:
         previous_text: str | None = None,
         on_event: EventSink = _noop,
         should_stop: StopCheck = _keep_going,
+        context: str = "",
+        trusted_text: str = "",
     ) -> list[DraftRound]:
         """Write -> code checks -> AI review -> revise.
 
@@ -217,13 +242,13 @@ class ContentPipeline:
         """
         rounds: list[DraftRound] = []
         feedback = list(feedback or [])
-        user_text = " ".join([intent.topic, intent.instructions, *feedback])
+        user_text = " ".join([intent.topic, intent.instructions, *feedback, trusted_text])
         pages: dict[str, str] = {}
         for version in range(first_version, first_version + self._max_rounds + 1):
             if await should_stop():
                 raise WorkflowStopped
             draft = await self._writer.write(
-                intent, profile, findings, registry, feedback, previous_text
+                intent, profile, findings, registry, feedback, previous_text, context
             )
             if await should_stop():  # cancelled during writing: don't pay for a review
                 raise WorkflowStopped
@@ -269,6 +294,42 @@ class ContentPipeline:
             assert blocked is not None
             raise CitationError("; ".join(blocked.problems))
         return rounds
+
+    async def write_email(
+        self,
+        request: str,
+        *,
+        feedback: list[str],
+        previous_text: str | None,
+        should_stop: StopCheck = _keep_going,
+        context: str = "",
+        trusted_text: str = "",
+    ) -> EmailDraft:
+        """One draft, plus one rewrite only if a blocking check fails."""
+        if self._email_writer is None:
+            raise ConfigurationError("No email writer is configured")
+        user_text = " ".join([request, *feedback, previous_text or "", trusted_text])
+        notes = list(feedback)
+        problems: list[str] = []
+        for _attempt in range(2):
+            if await should_stop():
+                raise WorkflowStopped
+            draft = await self._email_writer.write_email(request, notes, previous_text, context)
+            problems = email_problems(draft.subject, draft.body, user_text)
+            if not problems:
+                return draft
+            notes, previous_text = [*feedback, *problems], draft.body
+        raise CitationError("; ".join(problems))
+
+    async def decide_route(self, message: str) -> ManagerDecision:
+        if self._manager is None:
+            raise ConfigurationError("No manager is configured")
+        return await self._manager.decide(message)
+
+    async def summarize(self, previous: str, transcript: str) -> str:
+        if self._summarizer is None:
+            raise ConfigurationError("No summarizer is configured")
+        return await self._summarizer.summarize(previous, transcript)
 
     async def _read_cited_pages(
         self, draft: PostDraft, registry: SourceRegistry, pages: dict[str, str]

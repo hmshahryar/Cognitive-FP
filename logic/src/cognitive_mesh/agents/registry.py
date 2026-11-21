@@ -19,7 +19,23 @@ class EmployeeSpec:
 EMPLOYEES: dict[str, EmployeeSpec] = {
     spec.key: spec
     for spec in (
-        EmployeeSpec("manager", "Manager", "Understands the command and runs the workflow."),
+        EmployeeSpec("manager", "Manager", "Understands requests and routes them to specialists."),
+        EmployeeSpec(
+            "calendar",
+            "Calendar employee",
+            "Reads availability and prepares calendar changes for approval.",
+            tools=("GOOGLECALENDAR_EVENTS_LIST",),
+        ),
+        EmployeeSpec(
+            "sheets",
+            "Sheets employee",
+            "Reads spreadsheets and prepares exact sheet changes for approval.",
+            tools=(
+                "GOOGLESHEETS_SEARCH_SPREADSHEETS",
+                "GOOGLESHEETS_GET_SHEET_NAMES",
+                "GOOGLESHEETS_VALUES_GET",
+            ),
+        ),
         EmployeeSpec(
             "research",
             "Research employee",
@@ -33,6 +49,7 @@ EMPLOYEES: dict[str, EmployeeSpec] = {
             tools=("LINKEDIN_GET_MY_INFO",),
         ),
         EmployeeSpec("content", "Content employee", "Writes the post from research only."),
+        EmployeeSpec("email", "Email employee", "Writes email text; never chooses recipients."),
         EmployeeSpec(
             "review",
             "Review employee",

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cognitive_mesh.db.base import utcnow, uuid7
 from cognitive_mesh.integrations import linkedin
+from cognitive_mesh.integrations.actions import get_action
 from cognitive_mesh.models import (
     Approval,
     ApprovalStatus,
@@ -86,10 +87,13 @@ async def request_approval(
         raise ForbiddenError("Connection or execution does not belong to this task's workspace")
     if connection.status != ConnectionStatus.ACTIVE or connection.toolkit_slug != toolkit_slug:
         raise ConflictError(f"{toolkit_slug} is not connected")
-    if tool_slug == linkedin.POST_TOOL:
+    spec = get_action(action_type)
+    if spec is not None:
+        if spec.tool_slug != tool_slug or spec.toolkit != toolkit_slug:
+            raise ConflictError("This action does not match its tool")
         try:
-            linkedin.validate_post_payload(payload)
-        except linkedin.InvalidPayloadError as exc:
+            spec.validate(payload)
+        except ValueError as exc:
             raise ConflictError(str(exc)) from exc
 
     await session.execute(

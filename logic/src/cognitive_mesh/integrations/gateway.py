@@ -32,12 +32,31 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "COMPOSIO_SEARCH_NEWS",
         "COMPOSIO_SEARCH_WEB",
         "COMPOSIO_SEARCH_FETCH_URL_CONTENT",
+        "GMAIL_GET_PROFILE",
+        "GMAIL_FETCH_EMAILS",
+        "GOOGLECALENDAR_EVENTS_LIST",
+        "GOOGLESHEETS_SEARCH_SPREADSHEETS",
+        "GOOGLESHEETS_GET_SHEET_NAMES",
+        "GOOGLESHEETS_VALUES_GET",
     }
 )
 
 
 # External writes. Only the verified publishing service calls these; no AI employee can.
-APPROVED_ACTION_TOOLS: frozenset[str] = frozenset({"LINKEDIN_CREATE_LINKED_IN_POST"})
+APPROVED_ACTION_TOOLS: frozenset[str] = frozenset(
+    {
+        "LINKEDIN_CREATE_LINKED_IN_POST",
+        "GMAIL_SEND_EMAIL",
+        "GMAIL_FORWARD_MESSAGE",
+        "GMAIL_MOVE_TO_TRASH",
+        "GOOGLECALENDAR_CREATE_EVENT",
+        "GOOGLECALENDAR_PATCH_EVENT",
+        "GOOGLECALENDAR_DELETE_EVENT",
+        "GOOGLESHEETS_CREATE_GOOGLE_SHEET1",
+        "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND",
+        "GOOGLESHEETS_VALUES_UPDATE",
+    }
+)
 
 
 class ToolExecutionError(Exception):
@@ -52,7 +71,9 @@ class ActionOutcomeUnknownError(Exception):
     """The request was sent but its result is unknown. It must never be resent automatically."""
 
 
-_CLIENT_ERROR = re.compile(r"(?:status(?:\s+code)?|http|error)[\s:=]*(4\d\d)\b", re.IGNORECASE)
+_CLIENT_ERROR = re.compile(
+    r"(?:status(?:\s+code)?|http|error|\"?code\"?)[\s:=]*(4\d\d)\b", re.IGNORECASE
+)
 
 
 def _is_definite_rejection(status_code: int) -> bool:
@@ -294,7 +315,10 @@ class ComposioGateway:
             if result.result_type == "completed":
                 return result.model_dump(mode="json").get("data")
             detail = str(result.error or result.result_type)
-            if result.result_type == "blocked" or _CLIENT_ERROR.search(detail):
+            client_error = _CLIENT_ERROR.search(detail)
+            if result.result_type == "blocked" or (
+                client_error and _is_definite_rejection(int(client_error.group(1)))
+            ):
                 raise ActionRejectedError(detail)
             raise ActionOutcomeUnknownError(detail)
 

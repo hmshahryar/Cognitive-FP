@@ -68,7 +68,9 @@ async def test_requires_authentication(client: httpx.AsyncClient) -> None:
 
 async def test_unknown_and_coming_soon_connectors_are_rejected(client: httpx.AsyncClient) -> None:
     assert (await client.post("/api/connectors/nope/connect", headers=ALICE)).status_code == 404
-    assert (await client.post("/api/connectors/gmail/connect", headers=ALICE)).status_code == 409
+    assert (await client.post("/api/connectors/slack/connect", headers=ALICE)).status_code == 409
+    assert (await client.post("/api/connectors/notion/connect", headers=ALICE)).status_code == 409
+    assert (await client.post("/api/connectors/hubspot/connect", headers=ALICE)).status_code == 409
 
 
 # ---------- connect flow ----------

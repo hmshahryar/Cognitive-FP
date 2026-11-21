@@ -27,12 +27,20 @@ from sqlalchemy import select
 
 from cognitive_mesh.agents.employees import (
     ContentEmployee,
+    ConversationSummarizer,
+    EmailEmployee,
     IntentAnalyst,
+    ManagerAgent,
     ResearchEmployee,
     ReviewEmployee,
 )
 from cognitive_mesh.agents.errors import CitationError, ResearchFailedError
-from cognitive_mesh.agents.llm import build_chat_model, is_quota_exhausted, quota_retry_seconds
+from cognitive_mesh.agents.llm import (
+    MANAGER_TIMEOUT_SECONDS,
+    build_chat_model,
+    is_quota_exhausted,
+    quota_retry_seconds,
+)
 from cognitive_mesh.config import Settings
 from cognitive_mesh.db import Database
 from cognitive_mesh.integrations.gateway import IntegrationGateway, IntegrationUnavailableError
@@ -43,10 +51,11 @@ from cognitive_mesh.research.providers import (
     GeminiGroundingProvider,
 )
 from cognitive_mesh.security.approval_signing import ApprovalSigner
-from cognitive_mesh.services import audit
+from cognitive_mesh.services import audit, conversation
 from cognitive_mesh.services.approvals import latest_for_execution
 from cognitive_mesh.services.chats import add_message
 from cognitive_mesh.services.errors import ConfigurationError, ConflictError
+from cognitive_mesh.services.long_term_memory import LongTermMemory
 from cognitive_mesh.services.tasks import transition
 from cognitive_mesh.workflows.content_pipeline import ContentPipeline
 from cognitive_mesh.workflows.linkedin_graph import GraphDeps, GraphState, build_graph
@@ -85,6 +94,14 @@ def default_pipeline_factory(
         reviewer=ReviewEmployee(model),
         max_review_rounds=settings.max_review_rounds,
         page_reader=ComposioPageReader(gateway, user_id),
+        email_writer=EmailEmployee(model),
+        summarizer=ConversationSummarizer(model),
+        # Routing is a small classification, so it uses low thinking to respond quickly.
+        manager=ManagerAgent(
+            build_chat_model(
+                settings, thinking_level="low", timeout_seconds=MANAGER_TIMEOUT_SECONDS
+            )
+        ),
     )
 
 
@@ -103,9 +120,9 @@ def _user_facing_error(exc: Exception) -> str:
         return "I couldn't find reliable, citable sources for this topic. Try a broader topic."
     if isinstance(exc, CitationError):
         return (
-            "I stopped because every draft failed a fact check (sources, figures, quotations "
-            "or invented experience), so none was sent for approval. Press Retry, or give "
-            "the post a narrower topic."
+            "I stopped because every draft failed a required check (sources, figures, "
+            "quotations, placeholders or invented experience), so none was sent for approval. "
+            "Press Retry, or make the request more specific."
         )
     if isinstance(exc, ConfigurationError):
         return f"The server isn't configured for this yet ({exc.detail})."
@@ -130,12 +147,14 @@ class TaskRunner:
     ) -> None:
         self._db = db
         self._settings = settings
+        self.memory = LongTermMemory(settings.memory_db_path)
         self._deps = GraphDeps(
             db=db,
             settings=settings,
             gateway=gateway,
             signer=signer,
             build_pipeline=lambda user_id: pipeline_factory(settings, gateway, user_id),
+            memory=self.memory,
         )
         self._graph: Any = None
         self._conn: aiosqlite.Connection | None = None
@@ -156,6 +175,7 @@ class TaskRunner:
         return self._graph
 
     async def close(self) -> None:
+        await self.memory.close()
         if self._conn is not None:
             await self._conn.close()
             self._conn, self._graph = None, None
@@ -268,6 +288,18 @@ class TaskRunner:
             "outcome": "",
         }
         await self._invoke(execution, task, initial)
+        await self._compact_chat(task)
+
+    async def _compact_chat(self, task: Task) -> None:
+        """Best effort: a failed compaction never affects the user's task."""
+        try:
+            await conversation.compact_if_due(
+                self._db,
+                task.chat_id,
+                self._deps.build_pipeline(str(task.created_by)).summarize,
+            )
+        except Exception:
+            logger.warning("Chat compaction skipped", exc_info=True)
 
     async def resume(self, execution_id: uuid.UUID) -> bool:
         """Wake a paused graph. The decision is read from the DB inside the graph."""

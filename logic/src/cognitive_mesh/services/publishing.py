@@ -1,21 +1,22 @@
-"""Turns one verified approval into at most one external post.
+"""Turns one verified approval into at most one external action (post, email, ...).
 
     reserve: verify the approval, consume it, record SENDING (one transaction)
     send:    one gateway call, never retried
-    finish:  PUBLISHED, FAILED (definitely not posted) or NEEDS_CHECK (outcome unknown)
+    finish:  PUBLISHED, FAILED (definitely did not happen) or NEEDS_CHECK (outcome unknown)
 
 The reservation is committed BEFORE sending. If the process dies mid-send, recovery sees
-SENDING and marks NEEDS_CHECK instead of sending again, because LinkedIn's create-post call
-has no idempotency key that could make a resend safe.
+SENDING and marks NEEDS_CHECK instead of sending again, because these provider calls have
+no idempotency key that could make a repeat safe.
 """
 
+import re
 import uuid
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cognitive_mesh.db.base import utcnow, uuid7
-from cognitive_mesh.integrations import linkedin
+from cognitive_mesh.integrations.actions import action_for_tool, get_action
 from cognitive_mesh.models import (
     Approval,
     ApprovalStatus,
@@ -35,13 +36,8 @@ from cognitive_mesh.services.chats import add_message
 from cognitive_mesh.services.errors import ApprovalInvalidError, ConflictError
 from cognitive_mesh.services.tasks import transition
 
-NOT_PUBLISHED = (
-    "LinkedIn did not publish this post, so nothing went live. "
-    "Press Retry to prepare it for your approval again."
-)
-NEEDS_CHECK = (
-    "I can't confirm whether this post went live because the result was lost after sending. "
-    "Check your LinkedIn profile before posting it again. I will not resend it automatically."
+_MISSING_PERMISSION = re.compile(
+    r"insufficient authentication scopes|ACCESS_TOKEN_SCOPE_INSUFFICIENT", re.IGNORECASE
 )
 
 
@@ -61,13 +57,15 @@ async def reserve(
     connection = await session.get(
         IntegrationConnection, approval.connection_id, populate_existing=True
     )
-    if connection is None or not connection.has_scopes(linkedin.REQUIRED_SCOPE):
-        raise ApprovalInvalidError("LinkedIn posting permission is missing. Reconnect LinkedIn.")
-    if approval.tool_slug != linkedin.POST_TOOL or approval.action_type != linkedin.ACTION_TYPE:
-        raise ApprovalInvalidError("This approval is not for a LinkedIn post")
+    spec = get_action(approval.action_type)
+    if spec is None or approval.tool_slug != spec.tool_slug or approval.toolkit_slug != spec.toolkit:
+        raise ApprovalInvalidError("This approval is not for a supported action")
+    granted = set(connection.granted_scopes or []) if connection else set()
+    if not granted & set(spec.any_scopes):
+        raise ApprovalInvalidError(f"{spec.app} permission is missing. Reconnect {spec.app}.")
     try:
-        linkedin.validate_post_payload(approval.payload)
-    except linkedin.InvalidPayloadError as exc:
+        spec.validate(approval.payload)
+    except ValueError as exc:
         raise ApprovalInvalidError(str(exc)) from exc
 
     task = await session.get(Task, approval.task_id, populate_existing=True)
@@ -116,7 +114,8 @@ async def reserve(
         detail={
             "payload_hash": approval.payload_hash,
             "content_version": approval.content_version,
-            "visibility": approval.payload["visibility"],
+            "action_type": approval.action_type,
+            "visibility": approval.payload.get("visibility"),
         },
     )
     await session.commit()
@@ -131,6 +130,7 @@ async def finish(
     external_id: str | None = None,
     external_url: str | None = None,
     error: str | None = None,
+    note: str | None = None,
 ) -> None:
     """Record the single outcome. A publication leaves SENDING exactly once."""
     moved = await session.execute(
@@ -158,15 +158,25 @@ async def finish(
         allowed_from=[TaskStatus.EXECUTING],
         to=TaskStatus.COMPLETED if published else TaskStatus.FAILED,
     )
+    spec = action_for_tool(publication.tool_slug)
+    assert spec is not None
     if published:
-        message = f"Published on LinkedIn: {external_url}" if external_url else "Published on LinkedIn."
+        message = f"{spec.done_message}: {external_url}" if external_url else f"{spec.done_message}."
     else:
-        message = NOT_PUBLISHED if status == PublicationStatus.FAILED else NEEDS_CHECK
+        message = spec.failed_message if status == PublicationStatus.FAILED else spec.unknown_message
+        if status == PublicationStatus.FAILED and _MISSING_PERMISSION.search(error or ""):
+            message = (
+                f"{spec.app} refused this because the connection needs more permission, so "
+                f"nothing changed. Reconnect {spec.app} on the Connectors page, allow all "
+                "requested access, then press Retry."
+            )
         await session.execute(
             update(Execution)
             .where(Execution.id == publication.execution_id)
             .values(error=(error or status.value)[:2000])
         )
+    if note:
+        message = f"{message} {note}"
     chat = await session.get(Chat, task.chat_id)
     add_message(session, chat, role=MessageRole.ASSISTANT, content=message, task_id=task.id)  # type: ignore[arg-type]
     event = {

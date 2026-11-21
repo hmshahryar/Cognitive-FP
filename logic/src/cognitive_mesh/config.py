@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     max_review_rounds: int = 2
     # LangGraph checkpoints live in their OWN SQLite file, separate from app records.
     checkpoint_db_path: str = (PROJECT_ROOT / "data" / "checkpoints.db").as_posix()
+    # Long-term memory (LangGraph store), also in its own SQLite file.
+    memory_db_path: str = (PROJECT_ROOT / "data" / "memory.db").as_posix()
 
     # Async SQLAlchemy URL. SQLite for now; a postgresql+psycopg URL later.
     database_url: str = f"sqlite+aiosqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"

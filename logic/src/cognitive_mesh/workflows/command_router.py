@@ -16,8 +16,16 @@ from typing import Literal
 
 from cognitive_mesh.agents.schemas import LINKEDIN_MAX_CHARS
 from cognitive_mesh.integrations.catalog import get_connector
+from cognitive_mesh.workflows.calendar_commands import CalendarCommand, parse_calendar_command
+from cognitive_mesh.workflows.email_commands import EmailCommand, parse_email_command
+from cognitive_mesh.workflows.memory_commands import MemoryCommand, parse_memory_command
+from cognitive_mesh.workflows.sheet_commands import SheetCommand, parse_sheet_command
 
-Action = Literal["post_as_is", "write", "research", "model", "unsupported"]
+Action = Literal[
+    "post_as_is", "write", "research", "model", "unsupported", "gmail", "memory", "calendar",
+    "sheets",
+]
+POST_PLATFORMS = frozenset({"linkedin"})  # apps that accept social posts today
 
 PLATFORM_NAMES = {
     "linkedin": "LinkedIn",
@@ -104,6 +112,10 @@ class Route:
     action: Action
     platforms: tuple[str, ...] = ()
     text: str | None = None  # the user's exact post, for post_as_is
+    email: EmailCommand | None = None  # parsed email action, for gmail
+    memory: MemoryCommand | None = None  # explicit remember/forget/list
+    calendar: CalendarCommand | None = None  # parsed calendar action
+    sheet: SheetCommand | None = None  # parsed Google Sheets action
 
     @property
     def platform(self) -> str | None:
@@ -167,6 +179,18 @@ def _verbatim(command: str) -> tuple[str, str] | None:
 
 
 def route_command(command: str) -> Route:
+    memory = parse_memory_command(command)
+    if memory is not None:
+        return Route("memory", memory=memory)
+    calendar = parse_calendar_command(command)
+    if calendar is not None:
+        return Route("calendar", ("googlecalendar",), calendar=calendar)
+    sheet = parse_sheet_command(command)
+    if sheet is not None:
+        return Route("sheets", ("googlesheets",), sheet=sheet)
+    email = parse_email_command(command)
+    if email is not None:
+        return Route("gmail", ("gmail",), email=email)
     supplied = _verbatim(command)
     if supplied:
         head, body = supplied
@@ -186,7 +210,10 @@ def route_command(command: str) -> Route:
 
 
 def needs_platform(route: Route) -> bool:
-    return route.action != "unsupported" and not route.platforms
+    return (
+        route.action not in ("unsupported", "memory", "gmail", "calendar", "sheets")
+        and not route.platforms
+    )
 
 
 def with_platform(route: Route, platform: str) -> Route:
@@ -200,10 +227,16 @@ def is_available(platform: str) -> bool:
 
 def blocking_reply(route: Route) -> str | None:
     """A message for the user when the command can't proceed. Uses no AI or search."""
+    if route.action == "gmail":
+        return route.email.error if route.email else "Tell me what to do with the email."
+    if route.action == "calendar":
+        return route.calendar.error if route.calendar else "Tell me what to do on your calendar."
+    if route.action == "sheets":
+        return route.sheet.error if route.sheet else "Tell me what to do in Google Sheets."
     if route.action == "unsupported":
         return (
-            "Right now I can post your text, write a post, or research and write one for "
-            "LinkedIn. Tell me which, and where to post it."
+            "Right now I can post to LinkedIn, handle Gmail, read and schedule on Google "
+            "Calendar, or read and write Google Sheets. Tell me what to do and where."
         )
     if route.action == "post_as_is" and not route.text:
         return "Paste the exact text you want posted, and tell me where to post it."
@@ -212,8 +245,11 @@ def blocking_reply(route: Route) -> str | None:
     if len(route.platforms) > 1:
         names = " and ".join(PLATFORM_NAMES[p] for p in route.platforms)
         return f"I can handle one platform per command. Choose one of {names}."
-    if not is_available(route.platforms[0]):
-        return f"{PLATFORM_NAMES[route.platforms[0]]} isn't available yet. I can post to LinkedIn."
+    if route.platforms[0] not in POST_PLATFORMS or not is_available(route.platforms[0]):
+        return (
+            f"{PLATFORM_NAMES[route.platforms[0]]} isn't available for posts yet. "
+            "I can post to LinkedIn."
+        )
     if route.action == "post_as_is" and len(route.text or "") > LINKEDIN_MAX_CHARS:
         return (
             f"Your post is {len(route.text or '')} characters and LinkedIn allows "

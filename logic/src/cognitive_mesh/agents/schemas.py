@@ -66,6 +66,82 @@ class PostDraft(BaseModel):
     )
 
 
+class EmailDraft(BaseModel):
+    """Recipients are deliberately absent: only the user's command can set them."""
+
+    subject: str = Field(max_length=200, description="One clear subject line, plain text.")
+    body: str = Field(
+        max_length=10000,
+        description="The complete plain-text email, with no placeholders or signature name.",
+    )
+
+
+class ManagerDecision(BaseModel):
+    """Which specialist should handle a message. Code validates this before anything runs."""
+
+    target: Literal["calendar", "gmail", "linkedin", "sheets", "clarify", "unsupported"] = Field(
+        description="The specialist for this request, clarify if unclear, unsupported otherwise."
+    )
+    action: Literal[
+        "none", "list", "free", "create", "reschedule", "cancel", "write_email",
+        "forward_email", "trash_email", "write_post", "research_post", "sheet_list",
+        "sheet_read", "sheet_create", "sheet_append", "sheet_update",
+    ] = Field(default="none", description="The specialist's action.")
+    sheet_name: str = Field(
+        default="", max_length=120, description="For sheets: the spreadsheet name the user gave."
+    )
+    columns: list[str] = Field(
+        default_factory=list,
+        max_length=26,
+        description="For sheet_create: column names, with spelling corrected.",
+    )
+    rows: list[list[str]] = Field(
+        default_factory=list,
+        max_length=50,
+        description="For sheet_append: values copied exactly from the user's message.",
+    )
+    cell: str = Field(default="", max_length=10, description="For sheet_update: a cell like B2.")
+    value: str = Field(
+        default="", max_length=500, description="For sheet_update: the exact new value."
+    )
+    title: str = Field(
+        default="",
+        max_length=120,
+        description="For calendar create: a clean event title with spelling corrected.",
+    )
+    date_phrase: str = Field(
+        default="",
+        max_length=40,
+        description="The target date as the user said it, with spelling corrected and no added "
+        "year, e.g. '24 november' or 'tomorrow'. Empty if the user gave no date.",
+    )
+    source_date_phrase: str = Field(
+        default="",
+        max_length=40,
+        description="For reschedule or cancel: the event's current date, if the user gave one.",
+    )
+    all_day: bool = Field(
+        default=False,
+        description="True when marking a whole day, such as a deadline, holiday or due date, "
+        "with no clock time.",
+    )
+    event_query: str = Field(
+        default="",
+        max_length=100,
+        description="For reschedule or cancel: words from the user that identify the event.",
+    )
+    question: str = Field(
+        default="", max_length=240, description="For clarify: one short question for the user."
+    )
+
+
+class ConversationSummary(BaseModel):
+    summary: str = Field(
+        max_length=1500,
+        description="Compact factual summary of goals, decisions, preferences and open items.",
+    )
+
+
 class ReviewVerdict(BaseModel):
     approved: bool = Field(description="True only if the post is ready to show the user.")
     accuracy: int = Field(ge=1, le=5, description="Claims match the cited sources.")

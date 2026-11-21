@@ -64,6 +64,15 @@ class FakeGateway:
         self.publish_calls: list[dict] = []
         self.publish_error: BaseException | None = None
         self.publish_response: dict | None = None
+        self.gmail_messages: list[dict] = []
+        self.gmail_queries: list[str] = []
+        self.calendar_events: list[dict] = []
+        self.calendar_queries: list[dict] = []
+        self.calendar_has_more = False
+        self.sheets: list[dict] = []
+        self.sheet_tabs: list[str] = ["Sheet1"]
+        self.sheet_values: list[list[str]] = []
+        self.sheet_reads: list[str] = []
         self._n = 0
 
     def _check(self) -> None:
@@ -128,6 +137,24 @@ class FakeGateway:
         if tool_slug == "LINKEDIN_GET_MY_INFO":
             return {"localizedFirstName": "Jane", "localizedLastName": "Doe",
                     "localizedHeadline": "AI engineer", "id": self.profile_id}
+        if tool_slug == "GMAIL_GET_PROFILE":
+            return {"emailAddress": "jane@example.com"}
+        if tool_slug == "GMAIL_FETCH_EMAILS":
+            self.gmail_queries.append(arguments["query"])
+            return {"messages": self.gmail_messages[: arguments["max_results"]]}
+        if tool_slug == "GOOGLECALENDAR_EVENTS_LIST":
+            if "fields" in arguments:  # the timezone lookup
+                return {"summary": "jane@example.com", "timeZone": "Asia/Karachi"}
+            self.calendar_queries.append(dict(arguments))
+            result = {"items": list(self.calendar_events), "timeZone": "Asia/Karachi"}
+            return {**result, "nextPageToken": "more"} if self.calendar_has_more else result
+        if tool_slug == "GOOGLESHEETS_SEARCH_SPREADSHEETS":
+            return {"spreadsheets": list(self.sheets), "total_found": len(self.sheets)}
+        if tool_slug == "GOOGLESHEETS_GET_SHEET_NAMES":
+            return {"sheet_names": list(self.sheet_tabs)}
+        if tool_slug == "GOOGLESHEETS_VALUES_GET":
+            self.sheet_reads.append(arguments["range"])
+            return {"range": arguments["range"], "values": self.sheet_values}
         return {}
 
     async def execute_approved_action(  # type: ignore[no-untyped-def]
@@ -163,6 +190,7 @@ def settings(tmp_path: Path) -> Settings:
         frontend_origins=["http://localhost:3000"],
         run_worker=False,  # tests drive the runner explicitly with run_once()
         checkpoint_db_path=(tmp_path / 'checkpoints.db').as_posix(),
+        memory_db_path=(tmp_path / 'memory.db').as_posix(),
         google_api_key="",
     )
 

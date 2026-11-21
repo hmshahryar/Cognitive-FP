@@ -6,6 +6,28 @@ const SCORES = ["accuracy", "relevance", "quality", "formatting"] as const;
 export function DraftSummary({ drafts }: { drafts: Draft[] }) {
   const final = latestFinalDraft(drafts);
   if (!final) return null;
+  if (final.research.mode === "sheets") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        Sheet change · version {final.version}
+      </p>
+    );
+  }
+  if (final.research.mode === "calendar") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        Calendar change · version {final.version}
+      </p>
+    );
+  }
+  if (final.research.mode === "email") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        Email version {final.version}
+        {final.provider === "user" ? " · your exact command" : " · written by AI"}
+      </p>
+    );
+  }
   if (final.research.mode === "post_as_is") {
     return (
       <p className="border-t pt-3 text-xs text-muted-foreground">

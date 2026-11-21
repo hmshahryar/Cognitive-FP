@@ -104,7 +104,7 @@ async def test_content_tampered_after_approval_is_blocked(
         await s.commit()
     await app.state.runner.run_once()
     assert gateway.publish_calls == [] and await status(client, task) == "FAILED"
-    assert "Nothing went live" in await last_message(client, task)
+    assert "Nothing was posted" in await last_message(client, task)
 
 
 async def test_account_changed_after_approval_is_blocked(

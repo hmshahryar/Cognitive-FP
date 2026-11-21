@@ -49,6 +49,8 @@ _META_COMMENTARY = re.compile(
     r"|\bhere(?:'s| is) the (?:revised |final |updated )?(?:post|draft)\b"
 )
 
+_PLACEHOLDER = re.compile(r"\[[^\]\n]{1,60}\]|\{\{?[^}\n]{1,60}\}\}?|<(?:your|name|date)[^>\n]*>", re.IGNORECASE)
+
 STOCK_PHRASES = (
     "in today's fast-paced",
     "in today's digital",
@@ -203,6 +205,23 @@ def _style(draft: PostDraft) -> list[str]:
     if repeated:
         notes.append(f'Avoid repeating the phrase "{repeated[0]}".')
     return notes
+
+
+def email_problems(subject: str, body: str, user_text: str) -> list[str]:
+    """Blocking checks for AI-written email: no placeholders and no invented figures."""
+    text = f"{subject}\n{body}"
+    problems = []
+    placeholder = _PLACEHOLDER.search(text)
+    if placeholder:
+        problems.append(f'Remove the placeholder "{placeholder.group()}".')
+    meta = _META_COMMENTARY.search(_normalize(text))
+    if meta:
+        problems.append(f'Remove the writing-process text "{meta.group()}".')
+    allowed = all_numbers(user_text)
+    for number in sorted(stat_numbers(text)):
+        if number not in allowed:
+            problems.append(f"Remove the figure {number}: the user did not provide it.")
+    return problems
 
 
 def check_post(draft: PostDraft, evidence: dict[str, str], user_text: str = "") -> QualityReport:

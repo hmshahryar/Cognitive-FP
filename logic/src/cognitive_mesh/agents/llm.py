@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from google.genai import errors as genai_errors
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,6 +14,8 @@ from cognitive_mesh.services.errors import ConfigurationError
 logger = logging.getLogger(__name__)
 
 LLM_PROVIDER = "google_genai"  # recorded with every draft for traceability
+MODEL_TIMEOUT_SECONDS = 240.0  # default-thinking drafts were measured at about 154 seconds
+MANAGER_TIMEOUT_SECONDS = 20.0  # routing must never hold up the user's chat
 
 try:  # google-genai's HTTP transport (httpx2) raises its own transport errors
     from httpx2 import TransportError as _HttpxTransportError
@@ -84,11 +87,25 @@ async def call_with_retry[T](
     raise AssertionError("unreachable")
 
 
-def build_chat_model(settings: Settings, *, temperature: float | None = None):  # type: ignore[no-untyped-def]
-    """The single place models are created (LangChain owns model integration)."""
+def build_chat_model(  # type: ignore[no-untyped-def]
+    settings: Settings,
+    *,
+    temperature: float | None = None,
+    thinking_level: str | None = None,
+    timeout_seconds: float = MODEL_TIMEOUT_SECONDS,
+):
+    """The single place models are created (LangChain owns model integration).
+
+    SDK retries are off: `call_with_retry` handles transient errors and stops immediately on
+    an exhausted quota, whereas the SDK default would silently back off for minutes.
+    """
     if not settings.google_api_key:
         raise ConfigurationError("GOOGLE_API_KEY is not configured")
-    kwargs = {"temperature": temperature} if temperature is not None else {}
+    kwargs: dict[str, Any] = {"max_retries": 1, "timeout": timeout_seconds}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if thinking_level:
+        kwargs["thinking_level"] = thinking_level
     return ChatGoogleGenerativeAI(
         model=settings.llm_model, google_api_key=settings.google_api_key, **kwargs
     )

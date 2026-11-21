@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from cognitive_mesh.deps import CurrentAccountDep, SessionDep
 from cognitive_mesh.models import Task
 from cognitive_mesh.services import tasks as task_svc
+from cognitive_mesh.services.conversation import route_label
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -23,10 +24,13 @@ class TaskOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    route_label: str | None = None  # which specialist handled this task
 
 
 def task_out(task: Task) -> TaskOut:
-    return TaskOut.model_validate(task)
+    return TaskOut.model_validate(task).model_copy(
+        update={"route_label": route_label(task.resolved_route)}
+    )
 
 
 class ExecutionOut(BaseModel):
@@ -92,6 +96,7 @@ class PublicationOut(BaseModel):
 
     id: uuid.UUID
     approval_id: uuid.UUID
+    tool_slug: str
     status: str
     external_id: str | None
     external_url: str | None
