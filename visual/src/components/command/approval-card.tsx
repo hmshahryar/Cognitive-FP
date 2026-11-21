@@ -9,21 +9,24 @@ import {
   requestChangesAction,
   type FormState,
 } from "@/app/command/actions";
+import { QualityPanel } from "@/components/command/quality-panel";
 import { Button } from "@/components/ui/button";
-import type { Approval, Visibility } from "@/lib/command";
+import type { Approval, Draft, Visibility } from "@/lib/command";
 
 const VISIBILITY: Record<Visibility, { label: string; hint: string }> = {
   PUBLIC: { label: "Public", hint: "Anyone on or off LinkedIn" },
   CONNECTIONS: { label: "Connections only", hint: "Only your 1st-degree connections" },
 };
 
-/** Consent screen for one exact LinkedIn post. Nothing is published from here yet. */
+/** Consent screen for one exact LinkedIn post. Approving publishes this exact version. */
 export function ApprovalCard({
   approval,
   accountLabel,
+  draft,
 }: {
   approval: Approval;
   accountLabel: string;
+  draft: Draft | null;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -52,14 +55,16 @@ export function ApprovalCard({
       </header>
 
       <p className="text-sm text-muted-foreground">
-        Posting as <span className="font-medium text-foreground">{accountLabel}</span>. This is
-        exactly what will be published. Any change creates a new version that needs your approval
-        again.
+        Posting as <span className="font-medium text-foreground">{accountLabel}</span>. Approving
+        publishes exactly this text right away. Any change creates a new version that needs your
+        approval again.
       </p>
 
       <blockquote className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background p-4 text-sm">
         {payload.commentary}
       </blockquote>
+
+      {draft && <QualityPanel draft={draft} />}
 
       <fieldset className="flex flex-col gap-2" disabled={busy}>
         <legend className="mb-1 text-sm font-medium">Who can see it</legend>
@@ -94,7 +99,7 @@ export function ApprovalCard({
             run(() => approveAction(approval.id, approval.payload_hash, approval.content_version))
           }
         >
-          {pending ? "Working…" : "Approve"}
+          {pending ? "Working…" : "Approve and publish"}
         </Button>
         <Button variant="outline" disabled={busy} onClick={() => setShowChanges((s) => !s)}>
           Request changes

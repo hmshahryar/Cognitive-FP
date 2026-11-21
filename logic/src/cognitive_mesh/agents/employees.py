@@ -41,6 +41,15 @@ def _sources_block(registry: SourceRegistry) -> str:
     )
 
 
+def _pages_block(pages: dict[str, str]) -> str:
+    """Fetched pages are untrusted: delimited, and unable to close their own delimiter."""
+    return "\n".join(
+        f'<untrusted_source id="{source_id}">\n'
+        f"{text.replace('</untrusted_source', '< /untrusted_source')}\n</untrusted_source>"
+        for source_id, text in pages.items()
+    )
+
+
 # ---------- protocols ----------
 class IntentAnalyzer(Protocol):
     async def analyze(self, command: str) -> CommandIntent: ...
@@ -60,6 +69,7 @@ class Writer(Protocol):
         findings: ResearchFindings,
         registry: SourceRegistry,
         feedback: list[str],
+        previous_text: str | None = None,
     ) -> PostDraft: ...
 
 
@@ -70,6 +80,7 @@ class Reviewer(Protocol):
         draft: PostDraft,
         findings: ResearchFindings,
         registry: SourceRegistry,
+        pages: dict[str, str] | None = None,
     ) -> ReviewVerdict: ...
 
 
@@ -176,19 +187,41 @@ class ContentEmployee:
         findings: ResearchFindings,
         registry: SourceRegistry,
         feedback: list[str],
+        previous_text: str | None = None,
     ) -> PostDraft:
         findings_text = "\n".join(
             f"- {i.claim} [{', '.join(i.source_ids)}]" for i in findings.insights
         )
+        has_research = len(registry) > 0
         user = (
             f"Request: {intent.topic}\nConstraints: {intent.instructions or 'none'}\n"
-            f"Author profile: {profile}\n\nResearch summary: {findings.summary}\n"
-            f"Insights:\n{findings_text}\n\nSources:\n{_sources_block(registry)}"
+            f"Author profile: {profile}"
         )
+        if has_research:
+            user += (
+                f"\n\nResearch summary: {findings.summary}\n"
+                f"Insights:\n{findings_text}\n\nSources:\n{_sources_block(registry)}"
+            )
+        if previous_text:
+            user += f"\n\nPrevious draft:\n<<<\n{previous_text}\n>>>"
         if feedback:
-            user += "\n\nRevise the previous draft. Required changes:\n- " + "\n- ".join(feedback)
+            user += (
+                "\n\nRevise the previous draft. Keep what already works and fix these:\n- "
+                + "\n- ".join(feedback)
+            )
         messages = [
-            ("system", prompts.CONTENT.format(max_chars=LINKEDIN_MAX_CHARS)),
+            (
+                "system",
+                prompts.CONTENT.format(
+                    max_chars=LINKEDIN_MAX_CHARS,
+                    fact_rule=(
+                        prompts.FACTS_FROM_RESEARCH
+                        if has_research
+                        else prompts.FACTS_WITHOUT_RESEARCH
+                    ),
+                    citation_rule=prompts.CITE_RESEARCH if has_research else prompts.CITE_NOTHING,
+                ),
+            ),
             ("user", user),
         ]
         return await call_with_retry(lambda: self._llm.ainvoke(messages))  # type: ignore[return-value]
@@ -204,13 +237,23 @@ class ReviewEmployee:
         draft: PostDraft,
         findings: ResearchFindings,
         registry: SourceRegistry,
+        pages: dict[str, str] | None = None,
     ) -> ReviewVerdict:
         # Review exactly what would be published (body + formatted hashtags).
+        claims = "\n".join(f"- {c.text} [{', '.join(c.source_ids)}]" for c in draft.claims)
         user = (
             f"Request: {intent.topic} ({intent.instructions or 'no constraints'})\n\n"
             f"Post exactly as it would be published (cites {', '.join(draft.source_ids)}):\n"
             f"<<<\n{full_post_text(draft)}\n>>>\n\n"
-            f"Research summary: {findings.summary}\nSources:\n{_sources_block(registry)}"
         )
+        if len(registry) > 0:
+            user += (
+                f"Writer's claim list:\n{claims or '(none)'}\n\n"
+                f"Research summary: {findings.summary}\nSources:\n{_sources_block(registry)}"
+            )
+        else:
+            user += prompts.REVIEW_WITHOUT_RESEARCH
+        if pages:
+            user += f"\n\nFull text of cited sources:\n{_pages_block(pages)}"
         messages = [("system", prompts.REVIEW), ("user", user)]
         return await call_with_retry(lambda: self._llm.ainvoke(messages))  # type: ignore[return-value]

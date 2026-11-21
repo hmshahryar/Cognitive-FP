@@ -8,6 +8,7 @@ from cognitive_mesh.models.connection import (
     IntegrationConnection,
 )
 from cognitive_mesh.models.draft import ContentDraft
+from cognitive_mesh.models.publication import Publication, PublicationStatus
 from cognitive_mesh.models.user import User
 from cognitive_mesh.models.work import Chat, Execution, Message, MessageRole, Task, TaskStatus
 from cognitive_mesh.models.workspace import Workspace
@@ -25,6 +26,8 @@ __all__ = [
     "IntegrationConnection",
     "Message",
     "MessageRole",
+    "Publication",
+    "PublicationStatus",
     "Task",
     "TaskStatus",
     "User",

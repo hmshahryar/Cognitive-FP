@@ -1,9 +1,12 @@
 """LangGraph orchestration for "write and publish a LinkedIn post", with human approval.
 
-    prepare -> research -> write -> request_approval --interrupt()--> decide
-                             ^                                          |
-                             +------------ changes requested -----------+
-    decide: APPROVED -> end (step 5 adds publishing) | REJECTED -> end
+    prepare --(post as-is)--> use_provided_text ------+
+       |----(write)-----------------+                 |
+       +----(research/unclear)-> research -> write -> request_approval --interrupt()--> decide
+                                               ^                                          |
+                                               +------------ changes requested -----------+
+    prepare routes the command with plain code, so each path uses only what it needs.
+    decide: APPROVED -> publish (verified, at most once) -> end | REJECTED -> end
             INVALIDATED -> fail | still PENDING -> request_approval (pause again)
 
 Rules:
@@ -24,11 +27,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy import select, update
 
+from cognitive_mesh.agents import prompts
+from cognitive_mesh.agents.llm import LLM_PROVIDER
 from cognitive_mesh.agents.schemas import CommandIntent, ResearchFindings, full_post_text
 from cognitive_mesh.config import Settings
 from cognitive_mesh.db import Database
 from cognitive_mesh.integrations import linkedin
 from cognitive_mesh.integrations.gateway import (
+    ActionRejectedError,
     IntegrationGateway,
     IntegrationUnavailableError,
     ToolExecutionError,
@@ -39,24 +45,43 @@ from cognitive_mesh.models import (
     ContentDraft,
     Execution,
     MessageRole,
+    PublicationStatus,
     Task,
     TaskStatus,
 )
 from cognitive_mesh.research.sources import SourceRegistry
 from cognitive_mesh.security.approval_signing import ApprovalSigner
 from cognitive_mesh.services import approvals as approval_svc
-from cognitive_mesh.services import audit
+from cognitive_mesh.services import audit, publishing
 from cognitive_mesh.services.chats import add_message
 from cognitive_mesh.services.connectors import get_active_connection
-from cognitive_mesh.services.errors import ConfigurationError
+from cognitive_mesh.services.errors import ApprovalInvalidError, ConfigurationError, ConflictError
 from cognitive_mesh.services.tasks import transition
-from cognitive_mesh.workflows.content_pipeline import ContentPipeline, DraftRound
+from cognitive_mesh.workflows.command_router import (
+    Route,
+    bare_platform,
+    blocking_reply,
+    needs_platform,
+    route_command,
+    with_platform,
+)
+from cognitive_mesh.workflows.content_pipeline import (
+    ContentPipeline,
+    DraftRound,
+    WorkflowStopped,
+)
 
 Outcome = Literal[
-    "", "unsupported", "awaiting", "approved", "rejected", "changes", "cancelled", "failed"
+    "", "unsupported", "awaiting", "approved", "published", "rejected", "changes", "cancelled",
+    "failed",
 ]
-TERMINAL_OUTCOMES = {"unsupported", "approved", "rejected", "cancelled", "failed"}
+TERMINAL_OUTCOMES = {"unsupported", "approved", "published", "rejected", "cancelled", "failed"}
+PUBLISH_BLOCKED = (
+    "I stopped before posting because the approval is no longer valid. Nothing went live. "
+    "Reconnect LinkedIn if needed, then press Retry to approve a fresh version."
+)
 OPEN_TASK_STATUSES = [TaskStatus.RUNNING, TaskStatus.AWAITING_APPROVAL, TaskStatus.APPROVED]
+NO_RESEARCH: dict[str, Any] = {"summary": "", "insights": []}
 
 NOT_CONNECTED = (
     "LinkedIn isn't connected yet. Connect it on the Connectors page, then press Retry."
@@ -72,6 +97,8 @@ class GraphState(TypedDict, total=False):
     execution_id: str
     user_id: str
     command: str
+    mode: str  # post_as_is | write | research | model
+    provided_text: str
     profile: str
     author_urn: str
     intent: dict[str, Any]
@@ -171,11 +198,45 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         task = await load_task(state)
         return task.status == required and still_mine(task, state)
 
+    async def finish_with_reply(state: GraphState, text: str) -> GraphState:
+        """End the task with a message: nothing to draft, approve or publish."""
+        await say(state, text)
+        async with db.sessionmaker() as s:
+            task = await s.get(Task, uuid.UUID(state["task_id"]), populate_existing=True)
+            await transition(s, task, allowed_from=[TaskStatus.RUNNING], to=TaskStatus.COMPLETED)  # type: ignore[arg-type]
+            await s.commit()
+        return {"outcome": "unsupported"}
+
+    async def resolve_command(state: GraphState, task: Task) -> tuple[str, Route]:
+        """A bare platform reply ("LinkedIn") continues the command that asked for one."""
+        command = state["command"]
+        platform = bare_platform(command)
+        if platform:
+            async with db.sessionmaker() as s:
+                previous = await s.scalar(
+                    select(Task)
+                    .where(Task.chat_id == task.chat_id, Task.id < task.id)
+                    .order_by(Task.id.desc())
+                    .limit(1)
+                )
+            if previous is not None and previous.status == TaskStatus.COMPLETED:
+                earlier = route_command(previous.request)
+                if needs_platform(earlier):
+                    return previous.request, with_platform(earlier, platform)
+        return command, route_command(command)
+
     # ---------- nodes ----------
     async def prepare(state: GraphState) -> GraphState:
         if not await is_current(state, TaskStatus.RUNNING):
             return {"outcome": "cancelled"}
         task = await load_task(state)
+        command, route = await resolve_command(state, task)
+        reply = blocking_reply(route)
+        if reply:
+            return await finish_with_reply(state, reply)
+        await event(
+            state, "route.selected", "manager", {"mode": route.action, "platform": route.platform}
+        )
         async with db.sessionmaker() as s:
             connection = await get_active_connection(s, task.workspace_id, linkedin.TOOLKIT)
         if connection is None:
@@ -191,25 +252,85 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         profile, person_id = profile_from_info(info)
         if not person_id:
             return await fail(state, NO_PROFILE_ID, "LINKEDIN_GET_MY_INFO returned no id")
-        return {"profile": profile, "author_urn": linkedin.person_urn(person_id), "outcome": ""}
+        return {
+            "command": command,
+            "mode": route.action,
+            "provided_text": route.text or "",
+            "intent": CommandIntent(action="linkedin_post", topic=command).model_dump(),
+            "findings": dict(NO_RESEARCH),
+            "sources": [],
+            "feedback": [],
+            "next_version": 1,
+            "profile": profile,
+            "author_urn": linkedin.person_urn(person_id),
+            "outcome": "",
+        }
+
+    async def use_provided_text(state: GraphState) -> GraphState:
+        """The user's exact text becomes the draft. No model or search is involved."""
+        if not await is_current(state, TaskStatus.RUNNING):
+            return {"outcome": "cancelled"}
+        execution_id = uuid.UUID(state["execution_id"])
+        async with db.sessionmaker() as s:
+            saved = await s.scalar(
+                select(ContentDraft).where(
+                    ContentDraft.execution_id == execution_id, ContentDraft.is_final.is_(True)
+                )
+            )
+            if saved is None:
+                task = await s.get(Task, uuid.UUID(state["task_id"]))
+                assert task is not None
+                saved = ContentDraft(
+                    workspace_id=task.workspace_id, task_id=task.id, execution_id=execution_id,
+                    version=1, channel="linkedin", text=state["provided_text"],
+                    hashtags=[], source_ids=[], sources=[],
+                    review={"issues": [], "required_changes": []},
+                    accepted=False, is_final=True, model="none", provider="user",
+                    prompt_version="none", claims=[], quality={},
+                    research={"mode": "post_as_is"},
+                )
+                s.add(saved)
+                chat = await s.get(Chat, task.chat_id)
+                add_message(
+                    s, chat, role=MessageRole.ASSISTANT, task_id=task.id,  # type: ignore[arg-type]
+                    content="Your exact post is ready for approval. No AI changed it.",
+                )
+                audit.record(
+                    s, workspace_id=task.workspace_id, event="draft.ready", actor="manager",
+                    task_id=task.id, execution_id=execution_id,
+                    detail={"version": 1, "source": "user_text"},
+                )
+                await s.commit()
+        return {
+            "draft_text": saved.text,
+            "draft_id": str(saved.id),
+            "next_version": 2,
+            "feedback": [],
+            "outcome": "",
+        }
 
     async def research(state: GraphState) -> GraphState:
         if not await is_current(state, TaskStatus.RUNNING):
             return {"outcome": "cancelled"}
         pipeline = deps.build_pipeline(state["user_id"])
-        intent = await pipeline.understand(state["command"], on_event=sink(state))
-        if intent.action != "linkedin_post":
-            await say(state, "Right now I can research, write and publish LinkedIn posts. "
-                             "Other kinds of tasks are coming.")
-            async with db.sessionmaker() as s:
-                task = await s.get(Task, uuid.UUID(state["task_id"]), populate_existing=True)
-                await transition(s, task, allowed_from=[TaskStatus.RUNNING], to=TaskStatus.COMPLETED)  # type: ignore[arg-type]
-                await s.commit()
-            return {"outcome": "unsupported"}
+        intent = CommandIntent(**state["intent"])
+        mode = state["mode"]
+        if mode == "model":  # unclear wording: the only path that spends a classifying call
+            intent = await pipeline.understand(state["command"], on_event=sink(state))
+            if intent.action != "linkedin_post":
+                return await finish_with_reply(
+                    state,
+                    "Right now I can post your text, write a post, or research and write one "
+                    "for LinkedIn.",
+                )
+            mode = "research" if intent.explicit_research else "write"
+        if mode == "write":
+            return {"mode": mode, "intent": intent.model_dump(), "outcome": ""}
         findings, registry = await pipeline.research(
-            state["command"], intent, state["profile"], on_event=sink(state)
+            intent, state["profile"], on_event=sink(state)
         )
         return {
+            "mode": mode,
             "intent": intent.model_dump(),
             "findings": findings.model_dump(),
             "sources": registry.to_dicts(),
@@ -237,15 +358,30 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         if saved is None:
             pipeline = deps.build_pipeline(state["user_id"])
             registry = SourceRegistry.from_dicts(state["sources"])
-            rounds = await pipeline.write_and_review(
+            async def cancelled() -> bool:
+                return not await is_current(state, TaskStatus.RUNNING)
+
+            try:
+                rounds = await pipeline.write_and_review(
                 CommandIntent(**state["intent"]),
                 state["profile"],
-                ResearchFindings(**state["findings"]),
+                (
+                    ResearchFindings(**state["findings"])
+                    if state["findings"].get("insights")
+                    else ResearchFindings.model_construct(**NO_RESEARCH)
+                ),
                 registry,
                 feedback=state.get("feedback") or [],
                 first_version=first,
+                # A user's change request revises the draft they actually saw.
+                previous_text=state.get("draft_text") if state.get("feedback") else None,
                 on_event=sink(state),
-            )
+                should_stop=cancelled,
+                )
+            except WorkflowStopped:
+                return {"outcome": "cancelled"}
+            if await cancelled():  # cancelled during the final review: keep nothing
+                return {"outcome": "cancelled"}
             saved = await _save_rounds(state, rounds, registry)
         return {
             "draft_text": saved.text,
@@ -271,20 +407,39 @@ def build_graph(deps: GraphDeps) -> StateGraph:
                     channel="linkedin", text=full_post_text(rnd.draft),
                     hashtags=rnd.draft.hashtags, source_ids=rnd.draft.source_ids,
                     sources=[x for x in sources if x["id"] in rnd.draft.source_ids],
-                    review={**rnd.verdict.model_dump(), "problems": rnd.problems},
+                    review={
+                        **(
+                            rnd.verdict.model_dump()
+                            if rnd.verdict
+                            else {"approved": False, "issues": [],
+                                  "required_changes": rnd.problems}
+                        ),
+                        "problems": rnd.problems,
+                    },
                     accepted=rnd.accepted, is_final=rnd is final_round,
                     model=deps.settings.llm_model,
+                    provider=LLM_PROVIDER,
+                    prompt_version=prompts.PROMPT_VERSION,
+                    claims=rnd.claims,
+                    quality={"blocking": rnd.problems, "style": rnd.style_notes},
+                    research={
+                        "mode": "research" if sources else "write",
+                        "summary": state["findings"]["summary"],
+                        "insights": state["findings"]["insights"],
+                    },
+                    created_at=rnd.generated_at,
                 )
                 s.add(row)
                 final = row
             cited = [x for x in sources if x["id"] in final_round.draft.source_ids]
             listing = "\n".join(f"[{x['id']}] {x['title']} — {x['url']}" for x in cited)
+            references = f"\n\nSources:\n{listing}" if listing else "\n\nNo web research used."
             note = "" if final_round.accepted else "\n\n(The reviewer still had notes.)"
             chat = await s.get(Chat, task.chat_id)
             add_message(
                 s, chat, role=MessageRole.ASSISTANT, task_id=task.id,  # type: ignore[arg-type]
                 content=f"Draft v{final_round.version} is ready for your approval:\n\n"
-                f"{full_post_text(final_round.draft)}\n\nSources:\n{listing}{note}",
+                f"{full_post_text(final_round.draft)}{references}{note}",
             )
             audit.record(
                 s, workspace_id=task.workspace_id, event="draft.ready", actor="manager",
@@ -366,6 +521,60 @@ def build_graph(deps: GraphDeps) -> StateGraph:
             )
         return {"outcome": "awaiting"}  # still pending: pause again
 
+    async def publish(state: GraphState) -> GraphState:
+        """The only path to an external post. Sends at most once per approval."""
+        if deps.signer is None:
+            raise ConfigurationError("APPROVAL_SIGNING_KEY is not configured")
+        task = await load_task(state)
+        if not still_mine(task, state):
+            return {"outcome": "cancelled"}
+        async with db.sessionmaker() as s:
+            approval = await approval_svc.latest_for_execution(s, uuid.UUID(state["execution_id"]))
+            if approval is None:
+                return await fail(state, PUBLISH_BLOCKED, "no approval found")
+            existing = await publishing.for_approval(s, approval.id)
+            if existing is not None:  # this node re-ran after a crash or restart
+                if existing.status == PublicationStatus.SENDING:
+                    await publishing.finish(
+                        s, existing.id, PublicationStatus.NEEDS_CHECK,
+                        error="interrupted while sending",
+                    )
+                    return {"outcome": "failed"}
+                published = existing.status == PublicationStatus.PUBLISHED
+                return {"outcome": "published" if published else "failed"}
+            if task.status != TaskStatus.APPROVED:
+                return {"outcome": "cancelled"}
+            try:
+                publication = await publishing.reserve(s, deps.signer, approval)
+            except ApprovalInvalidError as exc:
+                return await fail(state, PUBLISH_BLOCKED, f"approval check failed: {exc.detail}")
+            except ConflictError:
+                return {"outcome": "cancelled"}
+            publication_id = publication.id
+            target = approval.target_account_id
+            arguments = dict(approval.payload)
+            toolkit, tool = approval.toolkit_slug, approval.tool_slug
+
+        status, post_id, url, error = PublicationStatus.PUBLISHED, None, None, None
+        try:
+            data = await deps.gateway.execute_approved_action(
+                user_id=state["user_id"], toolkit_slug=toolkit, tool_slug=tool,
+                connected_account_id=target, arguments=arguments,
+            )
+            post_id = linkedin.post_id_from(data)
+            url = linkedin.post_url(post_id)
+            if post_id is None:
+                status, error = PublicationStatus.NEEDS_CHECK, "success without a post id"
+        except ActionRejectedError as exc:
+            status, error = PublicationStatus.FAILED, str(exc)
+        except Exception as exc:  # noqa: BLE001 - after sending, any error means outcome unknown
+            status, error = PublicationStatus.NEEDS_CHECK, repr(exc)
+        async with db.sessionmaker() as s:
+            await publishing.finish(
+                s, publication_id, status, external_id=post_id, external_url=url, error=error
+            )
+        return {"outcome": "published" if status == PublicationStatus.PUBLISHED else "failed"}
+
     # ---------- wiring ----------
     def stop_or(next_node: str):  # type: ignore[no-untyped-def]
         def route(state: GraphState) -> str:
@@ -378,18 +587,35 @@ def build_graph(deps: GraphDeps) -> StateGraph:
             return "write"
         if outcome == "awaiting":
             return "request_approval"
-        return END  # approved | rejected | cancelled | failed (step 5: approved -> publish)
+        if outcome == "approved":
+            return "publish"
+        return END  # rejected | cancelled | failed
+
+    def after_prepare(state: GraphState) -> str:
+        if state.get("outcome") in TERMINAL_OUTCOMES:
+            return END
+        return {"post_as_is": "use_provided_text", "write": "write"}.get(state["mode"], "research")
 
     graph = StateGraph(GraphState)
     graph.add_node("prepare", prepare)
+    graph.add_node("use_provided_text", use_provided_text)
     graph.add_node("research", research)
     graph.add_node("write", write)
     graph.add_node("request_approval", request_approval)
     graph.add_node("decide", decide)
     graph.add_edge(START, "prepare")
-    graph.add_conditional_edges("prepare", stop_or("research"), ["research", END])
+    graph.add_conditional_edges(
+        "prepare", after_prepare, ["use_provided_text", "write", "research", END]
+    )
+    graph.add_conditional_edges(
+        "use_provided_text", stop_or("request_approval"), ["request_approval", END]
+    )
     graph.add_conditional_edges("research", stop_or("write"), ["write", END])
     graph.add_conditional_edges("write", stop_or("request_approval"), ["request_approval", END])
     graph.add_conditional_edges("request_approval", stop_or("decide"), ["decide", END])
-    graph.add_conditional_edges("decide", after_decide, ["write", "request_approval", END])
+    graph.add_conditional_edges(
+        "decide", after_decide, ["write", "request_approval", "publish", END]
+    )
+    graph.add_node("publish", publish)
+    graph.add_edge("publish", END)
     return graph

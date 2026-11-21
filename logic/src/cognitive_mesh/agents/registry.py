@@ -33,6 +33,11 @@ EMPLOYEES: dict[str, EmployeeSpec] = {
             tools=("LINKEDIN_GET_MY_INFO",),
         ),
         EmployeeSpec("content", "Content employee", "Writes the post from research only."),
-        EmployeeSpec("review", "Review employee", "Checks accuracy, relevance and format."),
+        EmployeeSpec(
+            "review",
+            "Review employee",
+            "Fact-checks cited sources and reviews writing quality.",
+            tools=("COMPOSIO_SEARCH_FETCH_URL_CONTENT",),
+        ),
     )
 }

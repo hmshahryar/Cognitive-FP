@@ -89,6 +89,45 @@ class ComposioSearchProvider:
         return parse_composio_web(data)
 
 
+# ---------- reading cited pages ----------
+MAX_PAGE_CHARS = 6000
+
+
+class PageReader(Protocol):
+    async def read(self, urls: list[str]) -> dict[str, str]: ...
+
+
+def parse_composio_pages(data: Any) -> dict[str, str]:
+    """Tool schema: data.results[{url, text, content_quality_warning}]. Skips poor extractions."""
+    results = (data or {}).get("results") or []
+    return {
+        r["url"]: r["text"][:MAX_PAGE_CHARS]
+        for r in results
+        if isinstance(r, dict)
+        and r.get("url")
+        and isinstance(r.get("text"), str)
+        and r["text"].strip()
+        and not r.get("content_quality_warning")
+    }
+
+
+class ComposioPageReader:
+    TOOLKIT = "composio_search"
+
+    def __init__(self, gateway: IntegrationGateway, user_id: str) -> None:
+        self._gateway = gateway
+        self._user_id = user_id
+
+    async def read(self, urls: list[str]) -> dict[str, str]:
+        data = await self._gateway.execute_read_only(
+            user_id=self._user_id,
+            toolkit_slug=self.TOOLKIT,
+            tool_slug="COMPOSIO_SEARCH_FETCH_URL_CONTENT",
+            arguments={"urls": urls, "text": True, "max_characters": MAX_PAGE_CHARS},
+        )
+        return parse_composio_pages(data)
+
+
 # ---------- Gemini Google Search grounding ----------
 def parse_grounding(response_metadata: dict[str, Any]) -> list[SearchHit]:
     """langchain-google-genai puts candidate.grounding_metadata in response_metadata."""

@@ -18,6 +18,8 @@ from cognitive_mesh.models import (
     ContentDraft,
     Execution,
     MessageRole,
+    Publication,
+    PublicationStatus,
     Task,
     TaskStatus,
 )
@@ -91,6 +93,19 @@ async def list_drafts(
         select(ContentDraft)
         .where(ContentDraft.task_id == task_id, ContentDraft.workspace_id == account.workspace.id)
         .order_by(ContentDraft.id)
+    )
+    return list(rows)
+
+
+async def list_publications(
+    session: AsyncSession, account: Account, task_id: uuid.UUID
+) -> list[Publication]:
+    await get_task(session, account, task_id)
+    rows = await session.scalars(
+        select(Publication)
+        .where(Publication.task_id == task_id, Publication.workspace_id == account.workspace.id)
+        .order_by(Publication.id)
+        .execution_options(populate_existing=True)
     )
     return list(rows)
 
@@ -210,6 +225,16 @@ async def cancel_task(session: AsyncSession, account: Account, task_id: uuid.UUI
 async def retry_task(session: AsyncSession, account: Account, task_id: uuid.UUID) -> Task:
     """New execution attempt (new LangGraph thread). Concurrent retries: one wins."""
     task = await get_task(session, account, task_id)
+    unresolved = await session.scalar(
+        select(Publication.id)
+        .where(Publication.task_id == task.id, Publication.status == PublicationStatus.NEEDS_CHECK)
+        .limit(1)
+    )
+    if unresolved is not None:
+        raise ConflictError(
+            "This post may already be live. Check LinkedIn, and send a new command only if "
+            "it is not there."
+        )
     await transition(
         session,
         task,

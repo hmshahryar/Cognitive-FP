@@ -1,11 +1,18 @@
-import type { Draft } from "@/lib/command";
+import { latestFinalDraft, type Draft } from "@/lib/command";
 
 const SCORES = ["accuracy", "relevance", "quality", "formatting"] as const;
 
 /** Review result and sources for a task's final draft. */
 export function DraftSummary({ drafts }: { drafts: Draft[] }) {
-  const final = drafts.find((d) => d.is_final);
+  const final = latestFinalDraft(drafts);
   if (!final) return null;
+  if (final.research.mode === "post_as_is") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        Draft v{final.version} · your exact text
+      </p>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2 border-t pt-3 text-sm">

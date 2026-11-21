@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from cognitive_mesh.auth import VerifiedIdentity, verify_clerk_session
 from cognitive_mesh.config import PROJECT_ROOT, Settings
 from cognitive_mesh.integrations.gateway import (
+    APPROVED_ACTION_TOOLS,
     READ_ONLY_TOOLS,
     ConnectedAccountInfo,
     ConnectionStart,
@@ -60,6 +61,9 @@ class FakeGateway:
         self.read_calls: list[tuple[str, str]] = []
         self.profile_id: str | None = "abc"
         self.fail = False
+        self.publish_calls: list[dict] = []
+        self.publish_error: BaseException | None = None
+        self.publish_response: dict | None = None
         self._n = 0
 
     def _check(self) -> None:
@@ -125,6 +129,19 @@ class FakeGateway:
             return {"localizedFirstName": "Jane", "localizedLastName": "Doe",
                     "localizedHeadline": "AI engineer", "id": self.profile_id}
         return {}
+
+    async def execute_approved_action(  # type: ignore[no-untyped-def]
+        self, *, user_id, toolkit_slug, tool_slug, connected_account_id, arguments
+    ):
+        if tool_slug not in APPROVED_ACTION_TOOLS:
+            raise ToolNotAllowedError(tool_slug)
+        self.publish_calls.append(
+            {"user_id": user_id, "tool": tool_slug, "account": connected_account_id,
+             "arguments": dict(arguments)}
+        )
+        if self.publish_error is not None:
+            raise self.publish_error
+        return self.publish_response or {"x_restli_id": f"urn:li:share:{7000 + len(self.publish_calls)}"}
 
 
 async def fake_verify_clerk_session(request: Request) -> VerifiedIdentity:

@@ -30,7 +30,7 @@ async def connect_linkedin(client: httpx.AsyncClient, app: FastAPI, headers=ALIC
         await s.commit()
 
 
-async def command(client: httpx.AsyncClient, text="Post about agentic AI", headers=ALICE) -> dict:  # type: ignore[no-untyped-def]
+async def command(client: httpx.AsyncClient, text="Research agentic AI and write a LinkedIn post", headers=ALICE) -> dict:  # type: ignore[no-untyped-def]
     chat = (await client.post("/api/chats", headers=headers, json={})).json()
     return (
         await client.post(f"/api/chats/{chat['id']}/tasks", headers=headers, json={"request": text})
@@ -69,7 +69,7 @@ async def test_run_drafts_and_pauses_for_approval(
         "lifecycleState": "PUBLISHED",
     }
     assert await events(client, task) == [
-        "task.created", "execution.started", "manager.intent", "research.mode",
+        "task.created", "execution.started", "route.selected",
         "research.completed", "review.completed", "draft.ready", "approval.requested",
     ]
     # The Social Media employee read the profile through the read-only path, as this user.
@@ -167,8 +167,8 @@ async def test_cancel_during_research_stops_before_drafting(
 
 async def test_runs_oldest_queued_first_and_each_once(client: httpx.AsyncClient, app: FastAPI) -> None:
     await connect_linkedin(client, app)
-    first = await command(client, "first")
-    second = await command(client, "second")
+    first = await command(client, "Research agents, then write a LinkedIn post")
+    second = await command(client, "Research robotics, then write a LinkedIn post")
     assert await app.state.runner.run_once() and await app.state.runner.run_once()
     assert await app.state.runner.run_once() is False
     for t in (first, second):

@@ -11,7 +11,7 @@ const LABEL: Record<TaskStatus, string> = {
   RUNNING: "In progress",
   AWAITING_APPROVAL: "Needs your approval",
   APPROVED: "Approved",
-  EXECUTING: "Executing",
+  EXECUTING: "Publishing",
   COMPLETED: "Completed",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
@@ -33,7 +33,15 @@ const TONE: Record<TaskStatus, string> = {
 const CANCELLABLE = new Set<TaskStatus>(["QUEUED", "RUNNING", "AWAITING_APPROVAL", "APPROVED"]);
 const RETRYABLE = new Set<TaskStatus>(["FAILED", "CANCELLED", "REJECTED"]);
 
-export function TaskCard({ task, children }: { task: Task; children?: React.ReactNode }) {
+export function TaskCard({
+  task,
+  canRetry = true,
+  children,
+}: {
+  task: Task;
+  canRetry?: boolean;
+  children?: React.ReactNode;
+}) {
   const [cancelState, cancel, cancelling] = useActionState<FormState>(
     cancelTaskAction.bind(null, task.id),
     { error: null },
@@ -64,7 +72,7 @@ export function TaskCard({ task, children }: { task: Task; children?: React.Reac
               </Button>
             </form>
           )}
-          {RETRYABLE.has(task.status) && (
+          {canRetry && RETRYABLE.has(task.status) && (
             <form action={retry}>
               <Button type="submit" size="sm" variant="outline" disabled={retrying}>
                 {retrying ? "Retrying…" : "Retry"}

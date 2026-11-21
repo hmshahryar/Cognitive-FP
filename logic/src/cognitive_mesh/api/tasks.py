@@ -69,6 +69,11 @@ class DraftOut(BaseModel):
     accepted: bool
     is_final: bool
     model: str
+    provider: str
+    prompt_version: str
+    claims: list[dict[str, Any]]
+    quality: dict[str, Any]
+    research: dict[str, Any]
     created_at: datetime
 
 
@@ -78,6 +83,28 @@ async def list_drafts(
 ) -> list[DraftOut]:
     """Every reviewed draft version the AI employees produced for this task."""
     return [DraftOut.model_validate(d) for d in await task_svc.list_drafts(session, account, task_id)]
+
+
+class PublicationOut(BaseModel):
+    """The publish result. The full provider error stays server-side."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    approval_id: uuid.UUID
+    status: str
+    external_id: str | None
+    external_url: str | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+@router.get("/{task_id}/publications", response_model=list[PublicationOut])
+async def list_publications(
+    task_id: uuid.UUID, account: CurrentAccountDep, session: SessionDep
+) -> list[PublicationOut]:
+    rows = await task_svc.list_publications(session, account, task_id)
+    return [PublicationOut.model_validate(p) for p in rows]
 
 
 @router.get("", response_model=list[TaskOut])

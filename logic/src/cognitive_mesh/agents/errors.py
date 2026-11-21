@@ -3,4 +3,4 @@ class ResearchFailedError(Exception):
 
 
 class CitationError(Exception):
-    """A draft cites sources the research never returned, or breaks a hard limit."""
+    """A draft keeps failing a blocking check (sources, figures, quotes, experience, length)."""

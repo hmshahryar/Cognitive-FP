@@ -65,9 +65,11 @@ async def test_approve_resumes_graph_to_approved(client: httpx.AsyncClient, app:
 
     assert (await approve(client, a)).status_code == 200
     assert await app.state.runner.run_once() is True  # processes the queued resume
-    assert await status(client, task) == "APPROVED"
-    assert not await is_paused(app, task)  # graph finished (step 5 adds publishing)
-    assert (await events(client, task))[-2:] == ["approval.approved", "graph.resumed"]
+    assert await status(client, task) == "COMPLETED"
+    assert not await is_paused(app, task)  # graph finished after publishing
+    assert (await events(client, task))[-4:] == [
+        "approval.approved", "graph.resumed", "publish.started", "publish.succeeded",
+    ]
     assert await approval_count(app) == 1
 
 
@@ -89,7 +91,7 @@ async def test_resume_is_idempotent(client: httpx.AsyncClient, app: FastAPI) -> 
     await app.state.runner.run_once()
     exec_id = __import__("uuid").UUID(task["current_execution_id"])
     assert await app.state.runner.resume(exec_id) is False  # nothing left to resume
-    assert await status(client, task) == "APPROVED" and await approval_count(app) == 1
+    assert await status(client, task) == "COMPLETED" and await approval_count(app) == 1
 
 
 async def test_reject_ends_graph_and_retry_starts_a_new_thread(
@@ -152,7 +154,7 @@ async def test_visibility_change_requires_new_approval(client: httpx.AsyncClient
 
     assert (await approve(client, v2)).status_code == 200
     await app.state.runner.run_once()
-    assert await status(client, task) == "APPROVED"
+    assert await status(client, task) == "COMPLETED"
 
 
 async def test_visibility_rules(client: httpx.AsyncClient, app: FastAPI) -> None:
@@ -216,7 +218,7 @@ async def test_decision_made_while_server_down_is_resumed_on_startup(
         assert (await restarted.recover())["resumed"] == 1
     finally:
         await restarted.close()
-    assert await status(client, task) == "APPROVED"
+    assert await status(client, task) == "COMPLETED"
     assert await approval_count(app) == 1
 
 
@@ -232,7 +234,7 @@ async def test_pause_survives_restart_and_still_waits(
         assert await is_paused(app, task)  # checkpoint persisted (durability="sync")
         await approve(client, a)
         assert await restarted.run_once() is True
-        assert await status(client, task) == "APPROVED"
+        assert await status(client, task) == "COMPLETED"
     finally:
         await restarted.close()
 

@@ -37,8 +37,11 @@ from cognitive_mesh.config import Settings
 from cognitive_mesh.db import Database
 from cognitive_mesh.integrations.gateway import IntegrationGateway, IntegrationUnavailableError
 from cognitive_mesh.models import ApprovalStatus, Chat, Execution, MessageRole, Task, TaskStatus
-from cognitive_mesh.research.providers import ComposioSearchProvider, GeminiGroundingProvider
-from cognitive_mesh.research.quick import QuickResearcher
+from cognitive_mesh.research.providers import (
+    ComposioPageReader,
+    ComposioSearchProvider,
+    GeminiGroundingProvider,
+)
 from cognitive_mesh.security.approval_signing import ApprovalSigner
 from cognitive_mesh.services import audit
 from cognitive_mesh.services.approvals import latest_for_execution
@@ -57,9 +60,13 @@ LIVE_STATUSES = [
     TaskStatus.RUNNING,
     TaskStatus.AWAITING_APPROVAL,
     TaskStatus.APPROVED,
+    TaskStatus.EXECUTING,
     TaskStatus.REJECTED,
     TaskStatus.CANCELLED,
 ]
+# Not yet sent externally, so an unexpected error can safely fail the task.
+FAILABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.AWAITING_APPROVAL, TaskStatus.APPROVED)
+CONTINUABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.APPROVED, TaskStatus.EXECUTING)
 
 
 def default_pipeline_factory(
@@ -73,11 +80,11 @@ def default_pipeline_factory(
     )
     return ContentPipeline(
         intent=IntentAnalyst(model),
-        quick_researcher=QuickResearcher(provider),
-        deep_researcher=ResearchEmployee(model, provider),
+        researcher=ResearchEmployee(model, provider),
         writer=ContentEmployee(model),
         reviewer=ReviewEmployee(model),
         max_review_rounds=settings.max_review_rounds,
+        page_reader=ComposioPageReader(gateway, user_id),
     )
 
 
@@ -95,10 +102,19 @@ def _user_facing_error(exc: Exception) -> str:
     if isinstance(exc, ResearchFailedError):
         return "I couldn't find reliable, citable sources for this topic. Try a broader topic."
     if isinstance(exc, CitationError):
-        return "The draft kept citing sources the research didn't find, so I stopped."
+        return (
+            "I stopped because every draft failed a fact check (sources, figures, quotations "
+            "or invented experience), so none was sent for approval. Press Retry, or give "
+            "the post a narrower topic."
+        )
     if isinstance(exc, ConfigurationError):
         return f"The server isn't configured for this yet ({exc.detail})."
     if isinstance(exc, IntegrationUnavailableError):
+        if "is retired" in str(exc):
+            return (
+                "The web search service is rejecting requests because Composio reports its "
+                "toolkit version as retired. Nothing was drafted. Try again later."
+            )
         return "A connected service was unavailable. Please try again shortly."
     return "Something went wrong while working on this. Please try again."
 
@@ -273,13 +289,11 @@ class TaskRunner:
             if (
                 fresh is None
                 or fresh.current_execution_id != execution.id
-                or fresh.status not in (TaskStatus.RUNNING, TaskStatus.AWAITING_APPROVAL)
+                or fresh.status not in FAILABLE_STATUSES
             ):
                 return
             await transition(
-                s, fresh,
-                allowed_from=[TaskStatus.RUNNING, TaskStatus.AWAITING_APPROVAL],
-                to=TaskStatus.FAILED,
+                s, fresh, allowed_from=FAILABLE_STATUSES, to=TaskStatus.FAILED
             )
             row = await s.get(Execution, execution.id)
             row.error = reason[:2000]  # type: ignore[union-attr]
@@ -314,8 +328,10 @@ class TaskRunner:
                 wake = decided or task.status == TaskStatus.CANCELLED
                 if wake and await self.resume(execution.id):
                     counts["resumed"] += 1
-            elif snap.next and task.status == TaskStatus.RUNNING:
-                await self._invoke(execution, task, None)  # continue from last checkpoint
+            elif snap.next and task.status in CONTINUABLE_STATUSES:
+                # Continue from the last checkpoint. An interrupted send becomes
+                # NEEDS_CHECK inside the publish node; it is never sent again.
+                await self._invoke(execution, task, None)
                 counts["continued"] += 1
             elif not snap.values and task.status == TaskStatus.RUNNING:
                 await self._fail(

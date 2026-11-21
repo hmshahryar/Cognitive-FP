@@ -20,6 +20,11 @@ def verdict(approved: bool = True, changes: list[str] | None = None) -> ReviewVe
         relevance=5,
         quality=4,
         formatting=5,
+        professionalism=4,
+        readability=4,
+        originality=4,
+        repetition=5,
+        natural_language=4,
         required_changes=changes or [],
     )
 
@@ -38,7 +43,9 @@ class FakeTeam:
     writer_feedback: list[list[str]] = field(default_factory=list)
     profiles: list[str] = field(default_factory=list)
     explicit_research: bool = False
-    research_modes: list[str] = field(default_factory=list)
+    previous_texts: list[str | None] = field(default_factory=list)
+    review_calls: int = 0
+    reviewed_pages: list[dict[str, str]] = field(default_factory=list)
 
     # --- employee protocols ---
     async def analyze(self, command: str) -> CommandIntent:
@@ -55,31 +62,33 @@ class FakeTeam:
             insights=[Insight(claim="Agents ship widely.", source_ids=self.insight_ids)],
         )
 
-    async def write(self, intent, profile, findings, registry, feedback) -> PostDraft:  # type: ignore[no-untyped-def]
+    async def write(self, intent, profile, findings, registry, feedback, previous_text=None) -> PostDraft:  # type: ignore[no-untyped-def]
         self.writer_feedback.append(list(feedback))
+        self.previous_texts.append(previous_text)
         return self.drafts[min(len(self.writer_feedback) - 1, len(self.drafts) - 1)]
 
-    async def review(self, intent, d, findings, registry) -> ReviewVerdict:  # type: ignore[no-untyped-def]
+    async def review(self, intent, d, findings, registry, pages=None) -> ReviewVerdict:  # type: ignore[no-untyped-def]
+        self.review_calls += 1
+        self.reviewed_pages.append(dict(pages or {}))
         i = len(self.writer_feedback) - 1
         return self.verdicts[min(i, len(self.verdicts) - 1)]
 
-    def pipeline(self, max_rounds: int = 2) -> ContentPipeline:
+    def pipeline(self, max_rounds: int = 2, page_reader=None) -> ContentPipeline:  # type: ignore[no-untyped-def]
         return ContentPipeline(
+            page_reader=page_reader,
             intent=self,
-            quick_researcher=_Tagged(self, "quick"),
-            deep_researcher=_Tagged(self, "deep"),
+            researcher=_Delegate(self),
             writer=self,
             reviewer=self,
             max_review_rounds=max_rounds,
         )
 
 
-class _Tagged:
-    """Records which research path the pipeline chose, then delegates to the team."""
+class _Delegate:
+    """Late-binds `team.research` so tests can replace it after building the pipeline."""
 
-    def __init__(self, team: "FakeTeam", mode: str) -> None:
-        self._team, self._mode = team, mode
+    def __init__(self, team: "FakeTeam") -> None:
+        self._team = team
 
     async def research(self, intent, profile, registry):  # type: ignore[no-untyped-def]
-        self._team.research_modes.append(self._mode)
         return await self._team.research(intent, profile, registry)

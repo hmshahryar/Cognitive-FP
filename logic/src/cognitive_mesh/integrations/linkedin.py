@@ -5,6 +5,7 @@ toolkit docs): author URN, commentary (<= 3000 chars), visibility, lifecycleStat
 This payload is what the user approves and what gets signed.
 """
 
+import re
 from typing import Any, Literal
 
 from cognitive_mesh.agents.schemas import LINKEDIN_MAX_CHARS
@@ -40,6 +41,20 @@ def build_post_payload(*, author_urn: str, commentary: str, visibility: str) -> 
     }
     validate_post_payload(payload)
     return payload
+
+
+def post_id_from(data: Any) -> str | None:
+    """The tool's response schema requires `x_restli_id`, the created post's URN."""
+    if not isinstance(data, dict):
+        return None
+    value = data.get("x_restli_id") or data.get("id")
+    return value if isinstance(value, str) and value else None
+
+
+def post_url(post_id: str | None) -> str | None:
+    if post_id and re.fullmatch(r"urn:li:(?:share|ugcPost|activity):\d+", post_id):
+        return f"https://www.linkedin.com/feed/update/{post_id}/"
+    return None
 
 
 def validate_post_payload(payload: dict[str, Any]) -> None:

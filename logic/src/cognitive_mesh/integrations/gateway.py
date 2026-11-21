@@ -6,11 +6,14 @@
 """
 
 import asyncio
+import contextlib
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from composio import Composio
+from composio_client import APIStatusError
 
 
 class IntegrationUnavailableError(Exception):
@@ -33,8 +36,27 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
 )
 
 
+# External writes. Only the verified publishing service calls these; no AI employee can.
+APPROVED_ACTION_TOOLS: frozenset[str] = frozenset({"LINKEDIN_CREATE_LINKED_IN_POST"})
+
+
 class ToolExecutionError(Exception):
     """The tool ran but reported failure."""
+
+
+class ActionRejectedError(Exception):
+    """The external action definitely did not happen."""
+
+
+class ActionOutcomeUnknownError(Exception):
+    """The request was sent but its result is unknown. It must never be resent automatically."""
+
+
+_CLIENT_ERROR = re.compile(r"(?:status(?:\s+code)?|http|error)[\s:=]*(4\d\d)\b", re.IGNORECASE)
+
+
+def _is_definite_rejection(status_code: int) -> bool:
+    return 400 <= status_code < 500 and status_code != 408
 
 
 @dataclass(frozen=True)
@@ -79,6 +101,16 @@ class IntegrationGateway(Protocol):
 
     async def execute_read_only(
         self, *, user_id: str, toolkit_slug: str, tool_slug: str, arguments: dict[str, Any]
+    ) -> Any: ...
+
+    async def execute_approved_action(
+        self,
+        *,
+        user_id: str,
+        toolkit_slug: str,
+        tool_slug: str,
+        connected_account_id: str,
+        arguments: dict[str, Any],
     ) -> Any: ...
 
 
@@ -212,3 +244,58 @@ class ComposioGateway:
             raise
         except Exception as exc:
             raise IntegrationUnavailableError(str(exc)) from exc
+
+    async def execute_approved_action(
+        self,
+        *,
+        user_id: str,
+        toolkit_slug: str,
+        tool_slug: str,
+        connected_account_id: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Run one approved write, locked to one account. Called once and never retried."""
+        if tool_slug not in APPROVED_ACTION_TOOLS:
+            raise ToolNotAllowedError(tool_slug)
+
+        def _execute() -> Any:
+            try:  # nothing has been sent yet, so any failure here is a definite "not posted"
+                account = _to_info(self.client.connected_accounts.get(connected_account_id))
+                if (
+                    account.user_id != user_id
+                    or account.toolkit_slug != toolkit_slug
+                    or account.status != "ACTIVE"
+                ):
+                    raise ActionRejectedError("The approved account is no longer usable")
+                session = self.client.sessions.create(
+                    user_id=user_id,
+                    toolkits=[toolkit_slug],
+                    manage_connections=False,
+                    connected_accounts={toolkit_slug: connected_account_id},
+                )
+            except ActionRejectedError:
+                raise
+            except Exception as exc:
+                raise ActionRejectedError(f"Could not prepare the request: {exc}") from exc
+
+            try:
+                # The SDK disables retries on session.execute for this reason.
+                result = session.execute(tool_slug, arguments=arguments)
+            except APIStatusError as exc:
+                if _is_definite_rejection(exc.status_code):
+                    raise ActionRejectedError(str(exc)) from exc
+                raise ActionOutcomeUnknownError(str(exc)) from exc
+            except Exception as exc:
+                raise ActionOutcomeUnknownError(str(exc)) from exc
+            finally:
+                with contextlib.suppress(Exception):  # cleanup must not change the outcome
+                    session.delete()
+
+            if result.result_type == "completed":
+                return result.model_dump(mode="json").get("data")
+            detail = str(result.error or result.result_type)
+            if result.result_type == "blocked" or _CLIENT_ERROR.search(detail):
+                raise ActionRejectedError(detail)
+            raise ActionOutcomeUnknownError(detail)
+
+        return await asyncio.to_thread(_execute)

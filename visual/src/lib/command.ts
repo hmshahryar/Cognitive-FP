@@ -51,21 +51,59 @@ export type Draft = {
   source_ids: string[];
   sources: DraftSource[];
   review: {
-    approved: boolean;
-    accuracy: number;
-    relevance: number;
-    quality: number;
-    formatting: number;
+    approved?: boolean;
+    accuracy?: number;
+    relevance?: number;
+    quality?: number;
+    formatting?: number;
+    professionalism?: number;
+    readability?: number;
+    originality?: number;
+    repetition?: number;
+    natural_language?: number;
+    unsupported_claims?: string[];
     issues: string[];
     required_changes: string[];
   };
   accepted: boolean;
   is_final: boolean;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  claims: DraftClaim[];
+  quality: { blocking?: string[]; style?: string[] };
+  research: { mode?: "post_as_is" | "write" | "research" };
   created_at: string;
+};
+
+export type DraftClaim = {
+  text: string;
+  source_ids: string[];
+  basis: "full_text" | "snippet";
 };
 
 export const getDrafts = (taskId: string) =>
   backendFetch<Draft[]>(`/tasks/${encodeURIComponent(taskId)}/drafts`);
+
+/** Each revision cycle has its own final draft: the newest one is the current post. */
+export const latestFinalDraft = (drafts: Draft[]) =>
+  drafts.reduce<Draft | null>(
+    (latest, d) => (d.is_final && (!latest || d.version > latest.version) ? d : latest),
+    null,
+  );
+
+export type Publication = {
+  id: string;
+  approval_id: string;
+  status: "SENDING" | "PUBLISHED" | "FAILED" | "NEEDS_CHECK";
+  external_id: string | null;
+  external_url: string | null;
+  created_at: string;
+  finished_at: string | null;
+};
+
+export const getPublications = (taskId: string) =>
+  backendFetch<Publication[]>(`/tasks/${encodeURIComponent(taskId)}/publications`);
 
 export type Visibility = "PUBLIC" | "CONNECTIONS";
 

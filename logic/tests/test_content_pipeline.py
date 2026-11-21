@@ -12,7 +12,6 @@ from cognitive_mesh.research.providers import (
 )
 from cognitive_mesh.research.sources import SearchHit, SourceRegistry
 from cognitive_mesh.workflows.content_pipeline import (
-    ContentPipeline,
     draft_problems,
     full_post_text,
 )
@@ -252,82 +251,3 @@ def test_quota_message_explains_reset_and_billing() -> None:
     except RuntimeError as wrapped:
         msg = _user_facing_error(wrapped)
     assert "daily free-tier limit" in msg and "12.3 hours" in msg and "billing" in msg
-
-
-# ---------- research mode: Research employee only on explicit request ----------
-async def test_default_command_uses_quick_search_not_the_research_employee() -> None:
-    team = FakeTeam()
-    events: list = []
-
-    async def sink(e, d):  # type: ignore[no-untyped-def]
-        events.append((e, d))
-
-    await team.pipeline().run("Write a LinkedIn post about agentic AI", profile="p", on_event=sink)
-    assert team.research_modes == ["quick"]
-    assert ("research.mode", {"mode": "quick"}) in events
-
-
-async def test_explicit_research_request_uses_the_research_employee() -> None:
-    team = FakeTeam(explicit_research=True)
-    await team.pipeline().run("Research agentic AI in depth and write a post", profile="p")
-    assert team.research_modes == ["deep"]
-
-
-async def test_at_research_mention_always_selects_deep_research() -> None:
-    team = FakeTeam(explicit_research=False)  # even if the model missed it
-    await team.pipeline().run("@research agentic AI then post on LinkedIn", profile="p")
-    assert team.research_modes == ["deep"]
-
-
-def test_at_research_mention_needs_a_real_mention() -> None:
-    from cognitive_mesh.agents.schemas import CommandIntent
-    from cognitive_mesh.research.quick import wants_deep_research
-
-    plain = CommandIntent(action="linkedin_post", topic="t")
-    assert wants_deep_research("please @research this", plain)
-    assert not wants_deep_research("email me at me@research.org", plain)
-    assert not wants_deep_research("write a post", plain)
-
-
-async def test_quick_researcher_cites_only_returned_sources_without_model_calls() -> None:
-    from cognitive_mesh.agents.schemas import CommandIntent
-    from cognitive_mesh.research.providers import WebAnswer
-    from cognitive_mesh.research.quick import QuickResearcher
-
-    class Provider:
-        name = "fake"
-
-        async def search_news(self, query, recency="w"):  # type: ignore[no-untyped-def]
-            assert recency == "w"
-            return [SearchHit(f"https://n/{i}", f"News {i}", "Pub", snippet="s") for i in range(7)]
-
-        async def search_web(self, query):  # type: ignore[no-untyped-def]
-            return WebAnswer("Agents are everywhere [1][2].", [SearchHit("https://w/1", "W1"), SearchHit("https://n/0", "dupe")])
-
-    reg = SourceRegistry()
-    findings = await QuickResearcher(Provider()).research(CommandIntent(action="linkedin_post", topic="agentic AI"), "p", reg)
-    assert len(reg) == 6  # 5 news (capped) + 1 new web source; duplicate URL merged
-    assert all(not reg.unknown(i.source_ids) for i in findings.insights)
-    assert findings.summary == "Agents are everywhere."  # [n] markers removed
-
-
-async def test_quick_search_with_no_results_fails_cleanly() -> None:
-    from cognitive_mesh.research.providers import WebAnswer
-    from cognitive_mesh.research.quick import QuickResearcher
-
-    class Empty:
-        name = "fake"
-
-        async def search_news(self, query, recency="w"):  # type: ignore[no-untyped-def]
-            return []
-
-        async def search_web(self, query):  # type: ignore[no-untyped-def]
-            return WebAnswer("", [])
-
-    team = FakeTeam()
-    pipeline = ContentPipeline(
-        intent=team, quick_researcher=QuickResearcher(Empty()), deep_researcher=team,
-        writer=team, reviewer=team,
-    )
-    with pytest.raises(ResearchFailedError):
-        await pipeline.run("post about x", profile="p")

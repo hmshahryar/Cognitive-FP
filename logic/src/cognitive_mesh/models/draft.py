@@ -31,4 +31,10 @@ class ContentDraft(UUIDPrimaryKeyMixin, Base):
     accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     is_final: Mapped[bool] = mapped_column(Boolean, default=False)
     model: Mapped[str] = mapped_column(String(64))
+    # Traceability: how this version was produced and what it was checked against.
+    provider: Mapped[str] = mapped_column(String(64), server_default="google_genai")
+    prompt_version: Mapped[str] = mapped_column(String(64), server_default="legacy")
+    claims: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, server_default="[]")
+    quality: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    research: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

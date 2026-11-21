@@ -6,8 +6,17 @@ import { ApprovalCard } from "@/components/command/approval-card";
 import { AutoRefresh } from "@/components/command/auto-refresh";
 import { CommandComposer } from "@/components/command/command-composer";
 import { DraftSummary } from "@/components/command/draft-summary";
+import { PublicationStatus } from "@/components/command/publication-status";
 import { TaskCard } from "@/components/command/task-card";
-import { getChat, getDrafts, getPendingApprovals, listChats, type Chat } from "@/lib/command";
+import {
+  getChat,
+  getDrafts,
+  getPendingApprovals,
+  getPublications,
+  latestFinalDraft,
+  listChats,
+  type Chat,
+} from "@/lib/command";
 import { listConnectors } from "@/lib/connectors";
 import { ApiError } from "@/lib/api";
 
@@ -62,12 +71,17 @@ async function ChatView({ chatId }: { chatId: string }) {
     throw e;
   }
   const { chat, messages, tasks } = detail;
-  const drafts = await Promise.all(tasks.map((t) => getDrafts(t.id)));
+  const [drafts, publications] = await Promise.all([
+    Promise.all(tasks.map((t) => getDrafts(t.id))),
+    Promise.all(tasks.map((t) => getPublications(t.id))),
+  ]);
   const awaiting = tasks.filter((t) => t.status === "AWAITING_APPROVAL");
   const pending = (await Promise.all(awaiting.map((t) => getPendingApprovals(t.id)))).flat();
   const accountLabel = pending.length ? await linkedInLabel() : "";
   // Keep refreshing while the AI team is working (including redrafts after feedback).
-  const working = tasks.some((t) => t.status === "QUEUED" || t.status === "RUNNING");
+  const working = tasks.some((t) =>
+    ["QUEUED", "RUNNING", "APPROVED", "EXECUTING"].includes(t.status),
+  );
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -86,7 +100,12 @@ async function ChatView({ chatId }: { chatId: string }) {
           ))}
         </ol>
         {pending.map((a) => (
-          <ApprovalCard key={a.id} approval={a} accountLabel={accountLabel} />
+          <ApprovalCard
+            key={a.id}
+            approval={a}
+            accountLabel={accountLabel}
+            draft={latestFinalDraft(drafts[tasks.findIndex((t) => t.id === a.task_id)] ?? [])}
+          />
         ))}
         <CommandComposer chatId={chat.id} />
       </section>
@@ -96,19 +115,24 @@ async function ChatView({ chatId }: { chatId: string }) {
           <p className="text-sm text-muted-foreground">Commands you send appear here.</p>
         ) : (
           tasks.map((t, i) => (
-            <TaskCard key={t.id} task={t}>
+            <TaskCard
+              key={t.id}
+              task={t}
+              canRetry={!publications[i].some((p) => p.status === "NEEDS_CHECK")}
+            >
               {t.status === "RUNNING" && (
                 <p className="text-xs text-muted-foreground" aria-live="polite">
                   {drafts[i].length === 0
-                    ? "Researching, writing and reviewing…"
+                    ? "Working on your command…"
                     : "Revising the draft with your feedback…"}
                 </p>
               )}
               {t.status === "APPROVED" && (
-                <p className="text-xs text-muted-foreground">
-                  Approved. Publishing is enabled in the next step.
+                <p className="text-xs text-muted-foreground" aria-live="polite">
+                  Approved. Publishing now…
                 </p>
               )}
+              <PublicationStatus publication={publications[i].at(-1)} />
               <DraftSummary drafts={drafts[i]} />
             </TaskCard>
           ))
@@ -136,8 +160,8 @@ async function CommandCenter({ searchParams }: { searchParams: Search }) {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">What should your AI team do?</h1>
             <p className="text-sm text-muted-foreground">
-              Describe the outcome you want. Anything that posts, sends or changes data will wait
-              for your approval first.
+              Say where to post, then give your exact text, ask for a post, or ask for research
+              first. Anything that posts will wait for your approval.
             </p>
           </div>
           <CommandComposer chatId={null} />

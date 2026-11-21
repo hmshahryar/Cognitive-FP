@@ -12,6 +12,8 @@ from cognitive_mesh.services.errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
+LLM_PROVIDER = "google_genai"  # recorded with every draft for traceability
+
 try:  # google-genai's HTTP transport (httpx2) raises its own transport errors
     from httpx2 import TransportError as _HttpxTransportError
 except ImportError:  # pragma: no cover
@@ -25,6 +27,8 @@ except ImportError:  # pragma: no cover
 
 def is_transient(exc: Exception) -> bool:
     """Network drops, provider 5xx and rate limits are worth retrying; bugs are not."""
+    if isinstance(exc, IntegrationUnavailableError) and "is retired" in str(exc):
+        return False  # a retired toolkit won't recover on retry: stop and spend nothing more
     if isinstance(
         exc,
         (
