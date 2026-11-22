@@ -1,0 +1,207 @@
+---
+title: Cognitive Mesh - current agent workflow
+config:
+  flowchart:
+    curve: basis
+    nodeSpacing: 35
+    rankSpacing: 55
+---
+flowchart TD
+    USER(["User types a command"])
+
+    subgraph FE["1. Frontend - Next.js"]
+        UI["Command Center<br/>chats, tasks, results"]
+        CARD["Approval card<br/>exact email, event, cells or post"]
+        MEMPAGE["Memory page<br/>review and delete saved items"]
+    end
+
+    subgraph API["2. Secure API - FastAPI"]
+        AUTH["Clerk session check<br/>user comes from the token, never the browser"]
+        WS["Workspace isolation<br/>every query is scoped to your workspace"]
+        TASKAPI["Create task and execution"]
+        DECAPI["Approval decision API<br/>approve, reject or request changes"]
+    end
+
+    subgraph RUN["3. Task runner"]
+        QUEUE["Queue<br/>claim next execution"]
+        THREAD["Own LangGraph thread per execution<br/>checkpoint durability = sync"]
+        RECOVER["Restart recovery<br/>continue from last checkpoint"]
+        COMPACT["Chat compaction<br/>best effort after a run"]
+    end
+
+    subgraph UNDERSTAND["4. Command understanding - conversation.resolve"]
+        SAVED{"Route already<br/>saved on task?"}
+        RULES["Plain command rules<br/>route_command, 0 AI tokens"]
+        KIND{"What is this<br/>message?"}
+        CANCEL["Cancel word<br/>drop pending command"]
+        CONTINUE["Reply to a question<br/>fill the pending command"]
+        MANAGER["Manager AI - Gemini<br/>low thinking, 20s limit"]
+        FALLBACK["Manager unavailable<br/>offline rules or ask again"]
+        GROUND["Code validation<br/>dates, recipients, guests and cell values<br/>must come from the user's words"]
+        CONTACTS["Resolve saved contacts"]
+        STORE["Save route on task<br/>retries keep the same meaning"]
+    end
+
+    subgraph MEMORY["Conversation memory"]
+        PENDING["Active command<br/>what is still missing"]
+        SHORT["Short-term<br/>last 5 exchanges"]
+        SUMMARY["Rolling summary<br/>at 10 exchanges, compact oldest 5"]
+        LONG["Long-term store<br/>facts and contacts saved on request"]
+    end
+
+    subgraph GRAPH["5. LangGraph workflow"]
+        START_NODE(["START"])
+        PREPARE["prepare<br/>load task, route, connected account"]
+        MODE{"Route mode"}
+
+        subgraph LINKEDIN["LinkedIn and content path"]
+            ASIS["use_provided_text<br/>post your exact words"]
+            RESEARCH["research<br/>Intent + Research employees<br/>only when requested"]
+            WRITE["write<br/>Content employee"]
+            QUALITY["Code quality checks<br/>no invented stats, quotes or experience"]
+            REVIEW["Review employee<br/>accuracy, relevance, quality, format"]
+        end
+
+        subgraph EMAILPATH["Email path"]
+            GMAILNODE["gmail_action<br/>send, write, forward or trash"]
+            EMAILAI["Email employee<br/>only when writing is needed"]
+        end
+
+        subgraph CALPATH["Calendar path"]
+            CALNODE["calendar_action<br/>list, free, create,<br/>reschedule or cancel"]
+        end
+
+        subgraph SHEETPATH["Sheets path"]
+            SHEETNODE["sheets_action<br/>list, read, create,<br/>append or update"]
+        end
+
+        READDONE(["Read-only result or question<br/>returned to chat"])
+        REQUEST["request_approval<br/>build exact payload"]
+        PAUSE["interrupt<br/>graph pauses, nothing is sent"]
+        DECIDE["decide<br/>read decision from database"]
+        OUTCOME{"Decision"}
+        STOPPED(["Stopped<br/>nothing sent"])
+        PUBLISH["publish<br/>only path to an external write"]
+    end
+
+    subgraph SAFETY["6. Approval and one-time execution"]
+        SIGN["HMAC-signed approval<br/>payload, version, account, action"]
+        VERIFY{"Signature and<br/>approval valid?"}
+        RESERVE["Reserve publication<br/>idempotency, at most once"]
+        BLOCK(["Blocked<br/>new approval required"])
+        RESULT{"Provider result"}
+        DONE(["PUBLISHED"])
+        FAILED(["FAILED<br/>definitely not done"])
+        CHECK(["NEEDS_CHECK<br/>never auto-repeated"])
+    end
+
+    subgraph GATEWAY["7. Composio gateway - server side only"]
+        READTOOLS["Read-only allowlist<br/>GMAIL_FETCH_EMAILS<br/>GOOGLECALENDAR_EVENTS_LIST<br/>GOOGLESHEETS_VALUES_GET<br/>GOOGLESHEETS_GET_SHEET_NAMES<br/>GOOGLESHEETS_SEARCH_SPREADSHEETS"]
+        WRITETOOLS["Approved-action allowlist<br/>LINKEDIN_CREATE_LINKED_IN_POST<br/>GMAIL_SEND_EMAIL, FORWARD_MESSAGE, MOVE_TO_TRASH<br/>GOOGLECALENDAR_CREATE, PATCH, DELETE_EVENT<br/>GOOGLESHEETS_CREATE, VALUES_APPEND, VALUES_UPDATE"]
+    end
+
+    subgraph APPS["8. Connected apps"]
+        LI["LinkedIn"]
+        GM["Gmail"]
+        GC["Google Calendar"]
+        GS["Google Sheets"]
+    end
+
+    subgraph DATA["Persistent storage - kept separate"]
+        APPDB[("App database<br/>users, chats, tasks, approvals,<br/>publications, audit events")]
+        CKPT[("LangGraph checkpoints")]
+        STOREDB[("Long-term memory store")]
+    end
+
+    USER --> UI --> AUTH --> WS --> TASKAPI --> QUEUE --> THREAD --> SAVED
+    RECOVER -.-> THREAD
+    SAVED -- yes --> START_NODE
+    SAVED -- no --> RULES --> KIND
+    KIND -- clear command --> GROUND
+    KIND -- cancel --> CANCEL --> STORE
+    KIND -- reply to pending --> CONTINUE --> GROUND
+    KIND -- unclear --> MANAGER
+    MANAGER -- typed decision --> GROUND
+    MANAGER -- timeout or quota --> FALLBACK --> GROUND
+    GROUND --> CONTACTS --> STORE --> START_NODE
+
+    PENDING -.-> CONTINUE
+    STORE -.-> PENDING
+    LONG -.-> CONTACTS
+    SHORT -.-> WRITE
+    SUMMARY -.-> WRITE
+    LONG -.-> WRITE
+    SHORT -.-> EMAILAI
+    SUMMARY -.-> EMAILAI
+    COMPACT -.-> SUMMARY
+
+    START_NODE --> PREPARE --> MODE
+    MODE -- post as is --> ASIS
+    MODE -- research --> RESEARCH
+    MODE -- write --> WRITE
+    MODE -- gmail --> GMAILNODE
+    MODE -- calendar --> CALNODE
+    MODE -- sheets --> SHEETNODE
+
+    RESEARCH --> WRITE --> QUALITY --> REVIEW
+    REVIEW -- needs revision --> WRITE
+    GMAILNODE <--> EMAILAI
+
+    GMAILNODE -. read .-> READTOOLS
+    CALNODE -. read .-> READTOOLS
+    SHEETNODE -. read .-> READTOOLS
+    GMAILNODE -- read only or missing detail --> READDONE
+    CALNODE -- read only or missing detail --> READDONE
+    SHEETNODE -- read only or missing detail --> READDONE
+
+    ASIS --> REQUEST
+    REVIEW -- accepted --> REQUEST
+    GMAILNODE -- exact action --> REQUEST
+    CALNODE -- exact action --> REQUEST
+    SHEETNODE -- exact action --> REQUEST
+
+    REQUEST --> SIGN --> PAUSE --> CARD --> DECAPI --> DECIDE --> OUTCOME
+    OUTCOME -- approve --> PUBLISH
+    OUTCOME -- request changes: content --> WRITE
+    OUTCOME -- request changes: email --> GMAILNODE
+    OUTCOME -- request changes: calendar --> CALNODE
+    OUTCOME -- request changes: sheets --> SHEETNODE
+    OUTCOME -- still pending --> REQUEST
+    OUTCOME -- reject or cancel --> STOPPED
+    OUTCOME -- invalidated --> BLOCK
+
+    PUBLISH --> VERIFY
+    VERIFY -- no --> BLOCK
+    VERIFY -- yes --> RESERVE --> WRITETOOLS
+    WRITETOOLS --> RESULT
+    RESULT -- success --> DONE
+    RESULT -- rejected --> FAILED
+    RESULT -- unknown --> CHECK
+    DONE --> UI
+    FAILED --> UI
+    CHECK --> UI
+    READDONE --> UI
+
+    READTOOLS -.-> LI & GM & GC & GS
+    WRITETOOLS --> LI & GM & GC & GS
+
+    TASKAPI -.-> APPDB
+    SIGN -.-> APPDB
+    RESERVE -.-> APPDB
+    THREAD -.-> CKPT
+    LONG -.-> STOREDB
+    MEMPAGE -.-> LONG
+
+    classDef platform fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A
+    classDef ai fill:#EEEDFE,stroke:#534AB7,color:#26215C
+    classDef safety fill:#E1F5EE,stroke:#0F6E56,color:#04342C
+    classDef store fill:#E6F1FB,stroke:#185FA5,color:#042C53
+    classDef bad fill:#FCEBEB,stroke:#A32D2D,color:#501313
+    classDef warn fill:#FAEEDA,stroke:#854F0B,color:#412402
+
+    class USER,UI,CARD,MEMPAGE,AUTH,WS,TASKAPI,DECAPI,QUEUE,THREAD,RECOVER,COMPACT,SAVED,RULES,KIND,CANCEL,CONTINUE,FALLBACK,CONTACTS,STORE,START_NODE,PREPARE,MODE,ASIS,GMAILNODE,CALNODE,SHEETNODE,READDONE,READTOOLS,WRITETOOLS,LI,GM,GC,GS platform
+    class MANAGER,RESEARCH,WRITE,REVIEW,EMAILAI ai
+    class GROUND,QUALITY,REQUEST,PAUSE,DECIDE,OUTCOME,PUBLISH,SIGN,VERIFY,RESERVE,DONE safety
+    class PENDING,SHORT,SUMMARY,LONG,APPDB,CKPT,STOREDB store
+    class FAILED,BLOCK,STOPPED bad
+    class CHECK warn

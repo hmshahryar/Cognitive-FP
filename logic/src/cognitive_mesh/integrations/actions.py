@@ -2,7 +2,7 @@
 
 To add an app action (Calendar, Drive, Sheets, WhatsApp Business, Slack, HubSpot, Salesforce):
 1. Add its verified payload rules in `integrations/<app>.py`.
-2. Register an `ActionSpec` here and add its tool to gateway.APPROVED_ACTION_TOOLS.
+2. Register an `ActionSpec` here and add its write capability in `capabilities/registry.py`.
 3. Enable the app in `catalog.py` and add its command workflow.
 Approval signing, one-time use, execution records and recovery then apply automatically.
 """

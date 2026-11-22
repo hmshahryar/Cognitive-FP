@@ -6,7 +6,7 @@ Guarantees enforced in code (not left to the model):
 - At most `max_review_rounds` revisions; drafts with invented citations are never
   returned as final.
 The stages (understand, research, write_and_review) are also called individually by
-the LangGraph graph in workflows/linkedin_graph.py, which adds checkpoints and approval.
+the LangGraph graph in workflows/command_graph, which adds checkpoints and approval.
 """
 
 from collections.abc import Awaitable, Callable

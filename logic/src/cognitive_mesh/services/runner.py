@@ -57,8 +57,8 @@ from cognitive_mesh.services.chats import add_message
 from cognitive_mesh.services.errors import ConfigurationError, ConflictError
 from cognitive_mesh.services.long_term_memory import LongTermMemory
 from cognitive_mesh.services.tasks import transition
+from cognitive_mesh.workflows.command_graph import GraphDeps, GraphState, build_graph
 from cognitive_mesh.workflows.content_pipeline import ContentPipeline
-from cognitive_mesh.workflows.linkedin_graph import GraphDeps, GraphState, build_graph
 
 logger = logging.getLogger(__name__)
 

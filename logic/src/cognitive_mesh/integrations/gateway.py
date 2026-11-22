@@ -15,6 +15,8 @@ from typing import Any, Protocol
 from composio import Composio
 from composio_client import APIStatusError
 
+from cognitive_mesh.capabilities import read_tool_slugs, write_tool_slugs
+
 
 class IntegrationUnavailableError(Exception):
     """Composio could not be reached or rejected the request."""
@@ -24,39 +26,11 @@ class ToolNotAllowedError(Exception):
     """A tool outside the read-only allowlist was requested."""
 
 
-# Tools AI employees may run directly. Anything that writes (posting, sending,
-# deleting) is NOT here: it only runs through the approved-action executor.
-READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        "LINKEDIN_GET_MY_INFO",
-        "COMPOSIO_SEARCH_NEWS",
-        "COMPOSIO_SEARCH_WEB",
-        "COMPOSIO_SEARCH_FETCH_URL_CONTENT",
-        "GMAIL_GET_PROFILE",
-        "GMAIL_FETCH_EMAILS",
-        "GOOGLECALENDAR_EVENTS_LIST",
-        "GOOGLESHEETS_SEARCH_SPREADSHEETS",
-        "GOOGLESHEETS_GET_SHEET_NAMES",
-        "GOOGLESHEETS_VALUES_GET",
-    }
-)
-
-
+# Both allowlists come from the capability registry, the single source of truth.
+# Tools AI employees may run directly.
+READ_ONLY_TOOLS: frozenset[str] = read_tool_slugs()
 # External writes. Only the verified publishing service calls these; no AI employee can.
-APPROVED_ACTION_TOOLS: frozenset[str] = frozenset(
-    {
-        "LINKEDIN_CREATE_LINKED_IN_POST",
-        "GMAIL_SEND_EMAIL",
-        "GMAIL_FORWARD_MESSAGE",
-        "GMAIL_MOVE_TO_TRASH",
-        "GOOGLECALENDAR_CREATE_EVENT",
-        "GOOGLECALENDAR_PATCH_EVENT",
-        "GOOGLECALENDAR_DELETE_EVENT",
-        "GOOGLESHEETS_CREATE_GOOGLE_SHEET1",
-        "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND",
-        "GOOGLESHEETS_VALUES_UPDATE",
-    }
-)
+APPROVED_ACTION_TOOLS: frozenset[str] = write_tool_slugs()
 
 
 class ToolExecutionError(Exception):
