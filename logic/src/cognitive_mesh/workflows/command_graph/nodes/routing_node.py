@@ -38,8 +38,8 @@ def build_routing_nodes(ctx: NodeContext) -> dict[str, NodeFunction]:
             return {"outcome": "cancelled"}
         task = await load_task(state)
 
-        async def decide_route(message: str) -> ManagerDecision:
-            return await deps.build_pipeline(state["user_id"]).decide_route(message)
+        async def decide_route(message: str, context: str) -> ManagerDecision:
+            return await deps.build_pipeline(state["user_id"]).decide_route(message, context)
 
         async with db.sessionmaker() as s:
             current = await s.get(Task, task.id, populate_existing=True)

@@ -56,7 +56,7 @@ class Summarizer(Protocol):
 
 
 class RouteManager(Protocol):
-    async def decide(self, message: str) -> ManagerDecision: ...
+    async def decide(self, message: str, context: str = "") -> ManagerDecision: ...
 
 
 class WorkflowStopped(Exception):
@@ -321,10 +321,10 @@ class ContentPipeline:
             notes, previous_text = [*feedback, *problems], draft.body
         raise CitationError("; ".join(problems))
 
-    async def decide_route(self, message: str) -> ManagerDecision:
+    async def decide_route(self, message: str, context: str = "") -> ManagerDecision:
         if self._manager is None:
             raise ConfigurationError("No manager is configured")
-        return await self._manager.decide(message)
+        return await self._manager.decide(message, context)
 
     async def summarize(self, previous: str, transcript: str) -> str:
         if self._summarizer is None:

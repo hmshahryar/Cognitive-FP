@@ -7,6 +7,7 @@ from sqlalchemy import select
 from cognitive_mesh.integrations import google_sheets
 from cognitive_mesh.models import Chat, ContentDraft, MessageRole, TaskStatus
 from cognitive_mesh.services import audit, sheet_actions
+from cognitive_mesh.services.active_items import load_active_items
 from cognitive_mesh.services.chats import add_message
 from cognitive_mesh.services.connectors import get_active_connection
 from cognitive_mesh.workflows.command_graph.context import NodeContext, NodeFunction
@@ -42,7 +43,7 @@ def build_sheets_nodes(ctx: NodeContext) -> dict[str, NodeFunction]:
                 )
             )
             connection = await get_active_connection(s, task.workspace_id, google_sheets.TOOLKIT)
-            last_id = await sheet_actions.last_spreadsheet(s, task.chat_id)
+            active = (await load_active_items(s, task.workspace_id, task.chat_id)).sheet
         if connection is None:
             return await fail(state, SHEETS_NOT_CONNECTED, "google sheets not connected")
 
@@ -51,11 +52,11 @@ def build_sheets_nodes(ctx: NodeContext) -> dict[str, NodeFunction]:
             try:
                 if command.kind in ("list", "read"):
                     answer = await sheet_actions.answer_read(
-                        deps.gateway, state["user_id"], command, last_id
+                        deps.gateway, state["user_id"], command, active
                     )
                     return await finish_with_reply(state, answer)
                 prepared = await sheet_actions.prepare_change(
-                    deps.gateway, state["user_id"], command, last_id
+                    deps.gateway, state["user_id"], command, active
                 )
             except sheet_actions.SheetStop as stop:
                 return await finish_with_reply(state, stop.message)

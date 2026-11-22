@@ -16,13 +16,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cognitive_mesh.agents.llm import MANAGER_TIMEOUT_SECONDS
 from cognitive_mesh.agents.schemas import ManagerDecision
 from cognitive_mesh.db import Database
 from cognitive_mesh.models import ChatMemory, Message, MessageRole, Task
+from cognitive_mesh.services.active_items import ActiveItems, load_active_items
 from cognitive_mesh.services.errors import ConfigurationError
 from cognitive_mesh.services.long_term_memory import LongTermMemory
 from cognitive_mesh.workflows.calendar_commands import (
@@ -58,7 +59,8 @@ MAX_TRANSCRIPT_MESSAGE_CHARS = 800
 _CANCEL_WORDS = {"cancel", "stop", "never mind", "nevermind", "forget it"}
 _NEW_COMMAND_ACTIONS = {"post_as_is", "write", "research", "gmail", "calendar", "sheets"}
 CANCELLED_REPLY = "Okay, I dropped that command. Nothing was sent or changed."
-ManagerDecide = Callable[[str], Awaitable[ManagerDecision]]
+MAX_SUPERVISOR_MESSAGES = 3
+ManagerDecide = Callable[[str, str], Awaitable[ManagerDecision]]
 _CALENDAR_LABELS = {
     "list": "Calendar agent · Read events",
     "free": "Calendar agent · Find free time",
@@ -204,13 +206,35 @@ def _same_command(pending: dict[str, Any], resolution: Resolution) -> bool:
     return json.loads(json.dumps(current)) == {**pending, "routed_by": current["routed_by"]}
 
 
-async def _ask_manager(raw: str, decide: ManagerDecide | None) -> Resolution | None:
+async def _supervisor_state(session: AsyncSession, task: Task) -> tuple[ActiveItems, str]:
+    """Active items and the user's latest words. Small, and never tool output or email text."""
+    active = await load_active_items(session, task.workspace_id, task.chat_id)
+    rows = await session.scalars(
+        select(Message.content)
+        .where(
+            Message.chat_id == task.chat_id,
+            Message.role == MessageRole.USER,
+            or_(Message.task_id.is_(None), Message.task_id != task.id),
+        )
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(MAX_SUPERVISOR_MESSAGES)
+    )
+    recent = [_clip(text, MAX_CONTEXT_MESSAGE_CHARS) for text in rows]
+    sections = [active.describe()] if active.describe() else []
+    if recent:
+        sections.append("Recent user messages:\n" + "\n".join(f"- {t}" for t in reversed(recent)))
+    return active, "\n\n".join(sections)
+
+
+async def _ask_manager(
+    raw: str, decide: ManagerDecide | None, active: ActiveItems, context: str
+) -> Resolution | None:
     """One small model call, only when plain rules can't understand the message."""
     try:
         if decide is None:
             raise ConfigurationError("No manager is available")
-        decision = await asyncio.wait_for(decide(raw), MANAGER_TIMEOUT_SECONDS + 2)
-        route, question = route_from_decision(decision, raw)
+        decision = await asyncio.wait_for(decide(raw, context), MANAGER_TIMEOUT_SECONDS + 2)
+        route, question = route_from_decision(decision, raw, active)
     except Exception:
         logger.warning("Manager routing unavailable; using offline rules", exc_info=True)
         marked = parse_calendar_mark(raw)
@@ -251,8 +275,9 @@ async def resolve(
                 resolution = _continue(pending, raw)
                 stuck = _same_command(pending, resolution)
             if stuck or (unclear and not pending):
+                active, supervisor_context = await _supervisor_state(session, task)
                 await session.commit()  # never hold a database write open during a model call
-                routed = await _ask_manager(raw, decide)
+                routed = await _ask_manager(raw, decide, active, supervisor_context)
                 actionable = routed is not None and routed.route.action != "unsupported"
                 if routed is not None and (actionable or not pending):
                     resolution = routed

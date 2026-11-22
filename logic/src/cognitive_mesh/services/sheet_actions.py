@@ -4,12 +4,8 @@ Spreadsheet content is untrusted and never reaches a model here. Nothing in this
 creates or changes a sheet.
 """
 
-import uuid
 from dataclasses import dataclass
 from typing import Any
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from cognitive_mesh.integrations import google_sheets as gs
 from cognitive_mesh.integrations.gateway import (
@@ -17,7 +13,7 @@ from cognitive_mesh.integrations.gateway import (
     IntegrationUnavailableError,
     ToolExecutionError,
 )
-from cognitive_mesh.models import Publication, PublicationStatus, Task
+from cognitive_mesh.services.active_items import ActiveSheet
 from cognitive_mesh.workflows.sheet_commands import SheetCommand
 
 READ_FAILED = (
@@ -27,7 +23,6 @@ READ_FAILED = (
 MAX_LISTED = 15
 MAX_READ_ROWS = 20
 READ_WINDOW = "A1:Z20"
-_SHEET_TOOLS = (gs.CREATE_TOOL, gs.APPEND_TOOL, gs.UPDATE_TOOL)
 
 
 class SheetStop(Exception):
@@ -56,21 +51,6 @@ async def _read(
         raise SheetStop(READ_FAILED) from exc
 
 
-async def last_spreadsheet(session: AsyncSession, chat_id: uuid.UUID) -> str | None:
-    """The sheet this chat last changed, for commands such as "add this to it"."""
-    return await session.scalar(
-        select(Publication.external_id)
-        .join(Task, Task.id == Publication.task_id)
-        .where(
-            Task.chat_id == chat_id,
-            Publication.tool_slug.in_(_SHEET_TOOLS),
-            Publication.status == PublicationStatus.PUBLISHED,
-        )
-        .order_by(Publication.created_at.desc())
-        .limit(1)
-    )
-
-
 async def _search(gateway: IntegrationGateway, user_id: str, query: str | None) -> list[dict]:
     arguments: dict[str, Any] = {"max_results": MAX_LISTED, "search_type": "name"}
     if query:
@@ -84,16 +64,18 @@ async def _search(gateway: IntegrationGateway, user_id: str, query: str | None) 
 
 
 async def _resolve(
-    gateway: IntegrationGateway, user_id: str, command: SheetCommand, last_id: str | None
+    gateway: IntegrationGateway, user_id: str, command: SheetCommand, active: ActiveSheet | None
 ) -> tuple[str, str]:
     """(spreadsheet id, display name). Only an exact, single name match is accepted."""
     if command.spreadsheet_id:
         return command.spreadsheet_id, command.name or "Linked spreadsheet"
     if command.use_last:
-        if not last_id:
+        if active is None:
             raise SheetStop("Which sheet do you mean? Reply with its exact name or paste its link.")
-        return last_id, "Latest sheet in this chat"
+        return active.id, active.name
     wanted = (command.name or "").strip().casefold()
+    if active is not None and active.name.strip().casefold() == wanted:
+        return active.id, active.name  # known from this chat, so no Drive search is needed
     matches = await _search(gateway, user_id, command.name)
     exact = [row for row in matches if str(row.get("name", "")).strip().casefold() == wanted]
     if len(exact) == 1:
@@ -127,14 +109,14 @@ async def _resolve_tab(
 
 
 async def answer_read(
-    gateway: IntegrationGateway, user_id: str, command: SheetCommand, last_id: str | None
+    gateway: IntegrationGateway, user_id: str, command: SheetCommand, active: ActiveSheet | None
 ) -> str:
     if command.kind == "list":
         sheets = await _search(gateway, user_id, None)
         if not sheets:
             return "I couldn't find any spreadsheets."
         return "Your recent sheets:\n" + "\n".join(f"- {row.get('name')}" for row in sheets)
-    spreadsheet_id, name = await _resolve(gateway, user_id, command, last_id)
+    spreadsheet_id, name = await _resolve(gateway, user_id, command, active)
     tab = await _resolve_tab(gateway, user_id, spreadsheet_id, command.tab)
     cells = command.cell_range or READ_WINDOW
     data = await _read(
@@ -151,14 +133,14 @@ async def answer_read(
 
 
 async def prepare_change(
-    gateway: IntegrationGateway, user_id: str, command: SheetCommand, last_id: str | None
+    gateway: IntegrationGateway, user_id: str, command: SheetCommand, active: ActiveSheet | None
 ) -> PreparedSheetAction:
     rows = [list(row) for row in command.rows]
     if command.kind == "create":
         payload = gs.build_create_payload(name=command.name or "", rows=rows)
         return PreparedSheetAction(gs.CREATE_ACTION, payload, f"Create sheet: {command.name}")
 
-    spreadsheet_id, name = await _resolve(gateway, user_id, command, last_id)
+    spreadsheet_id, name = await _resolve(gateway, user_id, command, active)
     tab = await _resolve_tab(gateway, user_id, spreadsheet_id, command.tab)
     if command.kind == "append":
         payload = gs.build_append_payload(

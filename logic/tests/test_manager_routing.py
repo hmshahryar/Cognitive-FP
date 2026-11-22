@@ -80,7 +80,7 @@ async def test_offline_fallback_still_routes_when_the_model_fails(
 async def test_slow_manager_cannot_block_the_chat(
     client: httpx.AsyncClient, app: FastAPI, team: FakeTeam, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def hangs(_message: str) -> ManagerDecision:
+    async def hangs(_message: str, _context: str = "") -> ManagerDecision:
         await asyncio.sleep(30)
         raise AssertionError("should have timed out")
 

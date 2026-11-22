@@ -41,10 +41,24 @@ _TARGET = re.compile(
 )
 _TO_IT = re.compile(rf"\b(?:to|into|in|on)\s+(?:it|(?:this|that)\s+{_SHEET})\b", re.IGNORECASE)
 _NAME = re.compile(
-    rf"\b(?:called|named|titled|name)\s+(?:{_QUOTED}|(.+?))"
+    rf"\b(?:called|named|titled|name\s+it|with\s+(?:the\s+)?name|(?:spread\s?)?sheet\s+name)"
+    rf"\s+(?:{_QUOTED}|(.+?))"
     r"(?=\s+(?:with|having|and\s+columns|columns?|headers?)\b|\s*:|\s*$)",
     re.IGNORECASE,
 )
+# "...and write my name in it Ali" or "...and write Ali in it": a value, never the title.
+_WRITE_INTO_NEW = re.compile(
+    r"^\s*(?:,\s*)?(?:and|then)\s+(?:write|put|add|enter)\s+(?:(?:my|the)\s+name\s*)?"
+    r"(?P<before>.*?)\s*\b(?:in|into|on)\s+it\b\s*:?\s*(?P<after>.*?)\s*[.!]?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_TWO_COLUMNS = re.compile(
+    r"^\s*(?:please\s+)?(?:make|create|add)\s+(?:two|2)\s+co?u?l[uo]*mn?s?\b[\s,:]*"
+    r"one\s+(?:for|to)\s+(?:mention\s+)?(?P<first>.+?)\s+and\s+"
+    r"one\s+(?:for|to)\s+(?:mention\s+)?(?P<second>.+?)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+DEFAULT_SHEET_NAME = "Untitled spreadsheet"
 _COLUMNS = re.compile(r"\b(?:columns?|headers?)\s*:?\s*(.+?)\s*$", re.IGNORECASE | re.DOTALL)
 _TAB = re.compile(rf"\b(?:tab|worksheet)\s+(?:{_QUOTED}|([\w -]{{1,60}}?))(?=\s*:|\s*$|\s+to\s)", re.IGNORECASE)
 _ROW_WORD = re.compile(r"^\s*(?:please\s+)?(?:add|append|insert|put|write)\s+(?:(?:a|an|new|this|these|the)\s+)*(?:rows?|data|entry|record)?\s*:?\s*", re.IGNORECASE)
@@ -133,12 +147,33 @@ def _tab(text: str) -> str | None:
     return (match.group(1) or match.group(2)).strip() if match else None
 
 
-def _create(text: str) -> SheetCommand:
+def _create(text: str, tail: str) -> SheetCommand | None:
+    """A clear create command. Unclear extra instructions return None for the Supervisor."""
+    written = _WRITE_INTO_NEW.match(tail)
+    if written:
+        before, after = written["before"].strip(), written["after"].strip()
+        if bool(before) == bool(after):
+            return None  # no value, or two possible values: don't guess
+        return finalize_sheet(
+            SheetCommand("create", name=DEFAULT_SHEET_NAME, rows=parse_rows(before or after))
+        )
     columns_match = _COLUMNS.search(text)
     name_match = _NAME.search(text)
     name = (name_match.group(1) or name_match.group(2)).strip(" .,") if name_match else None
     rows = (_columns(columns_match.group(1)),) if columns_match else ()
+    if not name and not rows and re.search(r"\b(?:and|then)\b", tail, re.IGNORECASE):
+        return None
     return finalize_sheet(SheetCommand("create", name=name, rows=rows))
+
+
+def _two_columns(text: str) -> SheetCommand | None:
+    """A follow-up that writes a label and a value side by side in the active sheet."""
+    match = _TWO_COLUMNS.match(text)
+    if not match:
+        return None
+    first, second = match["first"].strip(), match["second"].strip()
+    label = first[0].upper() + first[1:]
+    return finalize_sheet(SheetCommand("append", use_last=True, rows=((label, second),)))
 
 
 def _append(text: str) -> SheetCommand | None:
@@ -181,8 +216,12 @@ def parse_sheet_command(command: str) -> SheetCommand | None:
     """A SheetCommand if this is a clear Sheets instruction, otherwise None."""
     if _LIST.match(command):
         return SheetCommand("list")
-    if _CREATE.match(command):
-        return _create(command)
+    created = _CREATE.match(command)
+    if created:
+        return _create(command, command[created.end() :])
+    columns = _two_columns(command)
+    if columns is not None:
+        return columns
     if _UPDATE.match(command):
         updated = _update(command)
         if updated is not None:

@@ -98,7 +98,12 @@ class ManagerDecision(BaseModel):
     rows: list[list[str]] = Field(
         default_factory=list,
         max_length=50,
-        description="For sheet_append: values copied exactly from the user's message.",
+        description="For sheet_append or sheet_create: values copied exactly from the user's "
+        "message.",
+    )
+    use_active_item: bool = Field(
+        default=False,
+        description="True when the message refers to the active sheet or event in the chat state.",
     )
     cell: str = Field(default="", max_length=10, description="For sheet_update: a cell like B2.")
     value: str = Field(

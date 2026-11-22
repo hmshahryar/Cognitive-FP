@@ -47,6 +47,7 @@ class FakeTeam:
     explicit_research: bool = False
     previous_texts: list[str | None] = field(default_factory=list)
     manager_calls: list[str] = field(default_factory=list)
+    manager_contexts: list[str] = field(default_factory=list)
     manager_decision: ManagerDecision | None = None
     manager_error: Exception | None = None
     writer_contexts: list[str] = field(default_factory=list)
@@ -91,8 +92,9 @@ class FakeTeam:
         )
         return self.email_drafts[min(len(self.email_calls) - 1, len(self.email_drafts) - 1)]
 
-    async def decide(self, message: str) -> ManagerDecision:
+    async def decide(self, message: str, context: str = "") -> ManagerDecision:
         self.manager_calls.append(message)
+        self.manager_contexts.append(context)
         if self.manager_error:
             raise self.manager_error
         return self.manager_decision or ManagerDecision(target="unsupported")
