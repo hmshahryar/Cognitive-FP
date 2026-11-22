@@ -12,6 +12,12 @@ from cognitive_mesh.models.memory import ChatMemory
 from cognitive_mesh.models.publication import Publication, PublicationStatus
 from cognitive_mesh.models.user import User
 from cognitive_mesh.models.work import Chat, Execution, Message, MessageRole, Task, TaskStatus
+from cognitive_mesh.models.workflow import (
+    WorkflowRun,
+    WorkflowRunStatus,
+    WorkflowStep,
+    WorkflowStepStatus,
+)
 from cognitive_mesh.models.workspace import Workspace
 
 __all__ = [
@@ -33,5 +39,9 @@ __all__ = [
     "Task",
     "TaskStatus",
     "User",
+    "WorkflowRun",
+    "WorkflowRunStatus",
+    "WorkflowStep",
+    "WorkflowStepStatus",
     "Workspace",
 ]

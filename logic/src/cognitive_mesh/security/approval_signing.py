@@ -49,14 +49,36 @@ class ApprovalBinding:
         return hashlib.sha256(b"idem:" + self.message()).hexdigest()
 
 
+@dataclass(frozen=True)
+class PlanBinding:
+    """Everything one multi-step plan is allowed to do, in order."""
+
+    run_id: uuid.UUID
+    workspace_id: uuid.UUID
+    requested_by: uuid.UUID
+    playbook: str
+    playbook_version: int
+    title: str  # shown to the user when they approve
+    last_gate: int
+    plan_hash: str
+    # key, gate, action, tool, connection, account, payload hash and dependencies per step
+    steps: tuple[tuple[str, ...], ...]
+
+    def message(self) -> bytes:
+        # A different version label keeps plan and single-action signatures from overlapping.
+        data = asdict(self)
+        steps = data.pop("steps")
+        return canonical_json({"v": "plan-1", **{k: str(v) for k, v in data.items()}, "steps": steps})
+
+
 class ApprovalSigner:
     def __init__(self, key: str) -> None:
         if len(key) < 32:
             raise ValueError("APPROVAL_SIGNING_KEY must be at least 32 characters")
         self._key = key.encode("utf-8")
 
-    def sign(self, binding: ApprovalBinding) -> str:
+    def sign(self, binding: ApprovalBinding | PlanBinding) -> str:
         return hmac.new(self._key, binding.message(), hashlib.sha256).hexdigest()
 
-    def verify(self, binding: ApprovalBinding, signature: str) -> bool:
+    def verify(self, binding: ApprovalBinding | PlanBinding, signature: str) -> bool:
         return hmac.compare_digest(self.sign(binding), signature)

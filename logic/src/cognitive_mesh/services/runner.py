@@ -59,6 +59,7 @@ from cognitive_mesh.services.long_term_memory import LongTermMemory
 from cognitive_mesh.services.tasks import transition
 from cognitive_mesh.workflows.command_graph import GraphDeps, GraphState, build_graph
 from cognitive_mesh.workflows.content_pipeline import ContentPipeline
+from cognitive_mesh.workflows.engine import executor as workflow_executor
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,10 @@ class TaskRunner:
         self._resumes.put_nowait(execution_id)
         self._wake.set()
 
+    def wake(self) -> None:
+        """A workflow gate was approved, so check for work now."""
+        self._wake.set()
+
     async def _loop(self) -> None:
         await self.recover()
         while not self._stopping.is_set():
@@ -232,10 +237,14 @@ class TaskRunner:
             await self.resume(self._resumes.get_nowait())
             return True
         execution_id = await self._claim_next()
-        if execution_id is None:
+        if execution_id is not None:
+            await self.start_execution(execution_id)
+            return True
+        if self._deps.signer is None:
             return False
-        await self.start_execution(execution_id)
-        return True
+        return await workflow_executor.advance_due(
+            self._db, self._deps.gateway, self._deps.signer
+        )
 
     async def _claim_next(self) -> uuid.UUID | None:
         async with self._db.sessionmaker() as s:
@@ -341,6 +350,9 @@ class TaskRunner:
     async def recover(self) -> dict[str, int]:
         """Bring every live execution back in line with its checkpoint after a restart."""
         counts = {"resumed": 0, "continued": 0, "failed": 0}
+        interrupted_steps = await workflow_executor.recover_interrupted(self._db)
+        if interrupted_steps:
+            logger.warning("%d workflow steps need checking after restart", interrupted_steps)
         async with self._db.sessionmaker() as s:
             rows = list(
                 (
