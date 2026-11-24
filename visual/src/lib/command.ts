@@ -73,7 +73,9 @@ export type Draft = {
   prompt_version: string;
   claims: DraftClaim[];
   quality: { blocking?: string[]; style?: string[] };
-  research: { mode?: "post_as_is" | "write" | "research" | "email" | "calendar" | "sheets" };
+  research: {
+    mode?: "post_as_is" | "write" | "research" | "email" | "calendar" | "sheets" | "crm" | "notion" | "social";
+  };
   created_at: string;
 };
 
@@ -184,12 +186,66 @@ export type SheetPayload = {
   previous?: string;
 };
 
+export type CrmActionType =
+  | "crm.create_contact"
+  | "crm.update_contact"
+  | "crm.create_note"
+  | "crm.salesforce.create_contact"
+  | "crm.salesforce.update_contact"
+  | "crm.salesforce.create_note"
+  | "crm.zoho.create_contact"
+  | "crm.zoho.update_contact"
+  | "crm.zoho.create_note";
+
+export type CrmPayload = {
+  contact: { id: string | null; email: string };
+  account?: { id: string; name: string } | null;
+  skipped?: string[];
+  properties?: Record<string, string>;
+  changes?: { field: string; previous: string; value: string }[];
+  mode?: "fill" | "change";
+  note?: string;
+};
+
+export type NotionActionType = "notion.create_page" | "notion.append_content";
+
+export type NotionPayload = {
+  parent?: { id: string; title: string };
+  page?: { id: string; title: string };
+  title?: string;
+  body: string;
+};
+
+export type SocialActionType =
+  | "facebook.publish_post"
+  | "facebook.publish_photo"
+  | "instagram.publish_photo";
+
+export type SocialPayload = {
+  page?: { id: string; name: string };
+  account?: { id: string; username: string };
+  message?: string;
+  caption?: string;
+  design?: { id: string; edit_url: string | null };
+  image?: {
+    url: string;
+    sha256: string;
+    content_type: string;
+    size: number;
+    width: number | null;
+    height: number | null;
+  };
+};
+
 export type Approval = ApprovalBase &
   (
     | { action_type: "linkedin.publish_post"; payload: LinkedInPayload }
     | { action_type: EmailActionType; payload: EmailPayload }
     | { action_type: CalendarActionType; payload: CalendarPayload }
     | { action_type: SheetActionType; payload: SheetPayload }
+    | { action_type: CrmActionType; payload: CrmPayload }
+    | { action_type: NotionActionType; payload: NotionPayload }
+    | { action_type: SocialActionType; payload: SocialPayload }
   );
 
 export const getPendingApprovals = (taskId: string) =>

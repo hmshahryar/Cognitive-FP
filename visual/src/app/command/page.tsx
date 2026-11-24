@@ -160,8 +160,9 @@ async function CommandCenter({ searchParams }: { searchParams: Search }) {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">What should your AI team do?</h1>
             <p className="text-sm text-muted-foreground">
-              Post to LinkedIn, handle Gmail, schedule on Google Calendar, or read and write
-              Google Sheets. Anything that posts, sends or changes data waits for your approval.
+              Post to LinkedIn, a Facebook Page or Instagram, handle Gmail, schedule on Google Calendar, read and write Google
+              Sheets, manage HubSpot, Salesforce and Zoho CRM contacts, or work in Notion. Anything
+              that posts, sends or changes data waits for your approval.
             </p>
           </div>
           <CommandComposer chatId={null} />

@@ -84,6 +84,24 @@ def build_routing_nodes(ctx: NodeContext) -> dict[str, NodeFunction]:
                 "command": command, "mode": "sheets", "sheet": asdict(route.sheet),
                 "feedback": [], "next_version": 1, "outcome": "",
             }
+        if route.action == "crm":
+            assert route.crm is not None
+            return {
+                "command": command, "mode": "crm", "crm": asdict(route.crm),
+                "feedback": [], "next_version": 1, "outcome": "",
+            }
+        if route.action == "social":
+            assert route.social is not None
+            return {
+                "command": command, "mode": "social", "social": asdict(route.social),
+                "feedback": [], "next_version": 1, "outcome": "",
+            }
+        if route.action == "notion":
+            assert route.notion is not None
+            return {
+                "command": command, "mode": "notion", "notion": asdict(route.notion),
+                "feedback": [], "next_version": 1, "outcome": "",
+            }
         async with db.sessionmaker() as s:
             connection = await get_active_connection(s, task.workspace_id, linkedin.TOOLKIT)
         if connection is None:

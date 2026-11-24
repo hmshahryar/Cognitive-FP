@@ -24,7 +24,7 @@ ALICE = auth_headers("user_alice")
         ("Research AI agents and write a LinkedIn post", "research", ("linkedin",)),
         ("Write a LinkedIn post, research it first", "research", ("linkedin",)),
         ("@research agents then write a LinkedIn post", "research", ("linkedin",)),
-        ("Write an Instagram caption about coffee for Instagram", "write", ("instagram",)),
+        ("Write an Instagram caption about coffee for Instagram", "social", ("instagram",)),
         ("Post on LinkedIn and Instagram: hello there", "post_as_is", ("linkedin", "instagram")),
         ("Book me a flight", "unsupported", ()),
     ],
@@ -72,7 +72,8 @@ def test_platform_named_only_inside_the_post_is_not_a_destination() -> None:
 
 
 def test_blocking_replies() -> None:
-    assert "isn't available" in (blocking_reply(route_command("Post this on Instagram: hi")) or "")
+    assert "need an image" in (blocking_reply(route_command("Post this on Instagram: hi")) or "")
+    assert "exact text" in (blocking_reply(route_command("Write a Facebook post about AI")) or "")
     assert "one platform" in (blocking_reply(route_command("Post on LinkedIn and Instagram: hi")) or "")
     assert "exact text" in (blocking_reply(route_command("Post this on LinkedIn")) or "")
     too_long = "Post this on LinkedIn: " + "x" * 3001

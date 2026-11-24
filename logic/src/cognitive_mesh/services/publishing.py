@@ -61,7 +61,7 @@ async def reserve(
     if spec is None or approval.tool_slug != spec.tool_slug or approval.toolkit_slug != spec.toolkit:
         raise ApprovalInvalidError("This approval is not for a supported action")
     granted = set(connection.granted_scopes or []) if connection else set()
-    if not granted & set(spec.any_scopes):
+    if connection is None or not spec.is_permitted(granted):
         raise ApprovalInvalidError(f"{spec.app} permission is missing. Reconnect {spec.app}.")
     try:
         spec.validate(approval.payload)

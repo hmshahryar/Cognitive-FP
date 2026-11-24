@@ -23,6 +23,9 @@ class GraphState(TypedDict, total=False):
     email: dict[str, Any]
     calendar: dict[str, Any]
     sheet: dict[str, Any]
+    crm: dict[str, Any]
+    notion: dict[str, Any]
+    social: dict[str, Any]
     action_type: str
     action_payload: dict[str, Any]
     profile: str

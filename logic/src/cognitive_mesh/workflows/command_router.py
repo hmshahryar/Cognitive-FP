@@ -17,13 +17,16 @@ from typing import Literal
 from cognitive_mesh.agents.schemas import LINKEDIN_MAX_CHARS
 from cognitive_mesh.integrations.catalog import get_connector
 from cognitive_mesh.workflows.calendar_commands import CalendarCommand, parse_calendar_command
+from cognitive_mesh.workflows.crm_commands import CrmCommand, parse_crm_command
 from cognitive_mesh.workflows.email_commands import EmailCommand, parse_email_command
 from cognitive_mesh.workflows.memory_commands import MemoryCommand, parse_memory_command
+from cognitive_mesh.workflows.notion_commands import NotionCommand, parse_notion_command
 from cognitive_mesh.workflows.sheet_commands import SheetCommand, parse_sheet_command
+from cognitive_mesh.workflows.social_commands import SocialPost, parse_social_command
 
 Action = Literal[
     "post_as_is", "write", "research", "model", "unsupported", "gmail", "memory", "calendar",
-    "sheets",
+    "sheets", "crm", "notion", "social",
 ]
 POST_PLATFORMS = frozenset({"linkedin"})  # apps that accept social posts today
 
@@ -116,6 +119,9 @@ class Route:
     memory: MemoryCommand | None = None  # explicit remember/forget/list
     calendar: CalendarCommand | None = None  # parsed calendar action
     sheet: SheetCommand | None = None  # parsed Google Sheets action
+    crm: CrmCommand | None = None  # parsed CRM action
+    notion: NotionCommand | None = None  # parsed Notion action
+    social: SocialPost | None = None  # parsed Facebook Page or Instagram post
 
     @property
     def platform(self) -> str | None:
@@ -182,6 +188,15 @@ def route_command(command: str) -> Route:
     memory = parse_memory_command(command)
     if memory is not None:
         return Route("memory", memory=memory)
+    notion = parse_notion_command(command)
+    if notion is not None:
+        return Route("notion", ("notion",), notion=notion)
+    social = parse_social_command(command)
+    if social is not None:
+        return Route("social", (social.platform,), social=social)
+    crm = parse_crm_command(command)
+    if crm is not None:
+        return Route("crm", (crm.provider,) if crm.provider else (), crm=crm)
     calendar = parse_calendar_command(command)
     if calendar is not None:
         return Route("calendar", ("googlecalendar",), calendar=calendar)
@@ -211,7 +226,10 @@ def route_command(command: str) -> Route:
 
 def needs_platform(route: Route) -> bool:
     return (
-        route.action not in ("unsupported", "memory", "gmail", "calendar", "sheets")
+        route.action
+        not in (
+            "unsupported", "memory", "gmail", "calendar", "sheets", "crm", "notion", "social",
+        )
         and not route.platforms
     )
 
@@ -233,10 +251,18 @@ def blocking_reply(route: Route) -> str | None:
         return route.calendar.error if route.calendar else "Tell me what to do on your calendar."
     if route.action == "sheets":
         return route.sheet.error if route.sheet else "Tell me what to do in Google Sheets."
+    if route.action == "crm":
+        return route.crm.error if route.crm else "Tell me what to do in your CRM."
+    if route.action == "notion":
+        return route.notion.error if route.notion else "Tell me what to do in Notion."
+    if route.action == "social":
+        return route.social.error if route.social else "Tell me what to post."
     if route.action == "unsupported":
         return (
-            "Right now I can post to LinkedIn, handle Gmail, read and schedule on Google "
-            "Calendar, or read and write Google Sheets. Tell me what to do and where."
+            "Right now I can post to LinkedIn, a Facebook Page or Instagram, handle Gmail, read "
+            "and schedule on Google Calendar, read and write Google Sheets, manage HubSpot, "
+            "Salesforce and Zoho CRM contacts, or find, read and write Notion pages. Tell me "
+            "what to do and where."
         )
     if route.action == "post_as_is" and not route.text:
         return "Paste the exact text you want posted, and tell me where to post it."
@@ -245,6 +271,11 @@ def blocking_reply(route: Route) -> str | None:
     if len(route.platforms) > 1:
         names = " and ".join(PLATFORM_NAMES[p] for p in route.platforms)
         return f"I can handle one platform per command. Choose one of {names}."
+    if route.platforms[0] in ("facebook", "instagram"):
+        return (
+            f"For {PLATFORM_NAMES[route.platforms[0]]} I post your exact text. Send it like this: "
+            f"Post on {PLATFORM_NAMES[route.platforms[0]]}: your text."
+        )
     if route.platforms[0] not in POST_PLATFORMS or not is_available(route.platforms[0]):
         return (
             f"{PLATFORM_NAMES[route.platforms[0]]} isn't available for posts yet. "

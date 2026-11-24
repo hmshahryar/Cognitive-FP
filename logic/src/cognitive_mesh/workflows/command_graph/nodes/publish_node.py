@@ -59,25 +59,43 @@ def build_publish_nodes(ctx: NodeContext) -> dict[str, NodeFunction]:
         status, post_id, url, error = PublicationStatus.PUBLISHED, None, None, None
         note: str | None = None
         try:
+            if action.pre_check is not None:
+                await action.pre_check(approved_payload)  # nothing has been sent yet
             data = await deps.gateway.execute_approved_action(
                 user_id=state["user_id"], toolkit_slug=toolkit, tool_slug=tool,
                 connected_account_id=target, arguments=arguments,
             )
             post_id = action.result_id(data)
             url = action.result_url(data, post_id)
+            completes = action.follow_up_result_id is not None
             if post_id is None:
                 status, error = PublicationStatus.NEEDS_CHECK, "success without a result id"
             elif action.follow_up is not None:
                 # Part of the same approval. A failure here is reported and never retried.
                 try:
                     step = action.follow_up(approved_payload, data)
-                    if step is not None:
-                        await deps.gateway.execute_approved_action(
+                    if step is None and completes:
+                        status, error = PublicationStatus.NEEDS_CHECK, "no follow-up step"
+                    elif step is not None:
+                        finished = await deps.gateway.execute_approved_action(
                             user_id=state["user_id"], toolkit_slug=toolkit,
                             tool_slug=step.tool_slug, connected_account_id=target,
                             arguments=step.arguments,
                         )
+                        if completes:
+                            assert action.follow_up_result_id is not None
+                            post_id = action.follow_up_result_id(finished)
+                            url = action.result_url(finished, post_id)
+                            if post_id is None:
+                                status = PublicationStatus.NEEDS_CHECK
+                                error = "follow-up succeeded without a result id"
+                except ActionRejectedError as exc:
+                    if completes:  # the second step definitely didn't happen
+                        status, post_id, url = PublicationStatus.FAILED, None, None
+                    note, error = action.follow_up_failed, str(exc)
                 except Exception as exc:  # noqa: BLE001 - the first step already succeeded
+                    if completes:
+                        status, post_id, url = PublicationStatus.NEEDS_CHECK, None, None
                     note, error = action.follow_up_failed, repr(exc)
         except ActionRejectedError as exc:
             status, error = PublicationStatus.FAILED, str(exc)

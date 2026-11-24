@@ -18,6 +18,10 @@ class RiskLevel(StrEnum):
     INTERNAL_WRITE = "internal_write"
     CUSTOMER_CONTACT = "customer_contact"
     PUBLIC = "public"
+    # Creates something private in the user's own account (a Canva draft) that nobody else sees
+    # and the user can delete. It runs without approval; whatever is later published from it
+    # still needs approval.
+    PRIVATE_DRAFT = "private_draft"
     SPEND = "spend"
 
 
@@ -27,6 +31,9 @@ class AgentRole(StrEnum):
     DATA = "data"
     RESEARCH = "research"
     SOCIAL = "social"
+    CRM = "crm"
+    KNOWLEDGE = "knowledge"
+    DESIGN = "design"
 
 
 class CapabilityDeniedError(Exception):
@@ -50,7 +57,8 @@ class Capability:
 
     @property
     def is_write(self) -> bool:
-        return self.risk is not RiskLevel.READ
+        """An external change that needs approval."""
+        return self.risk not in (RiskLevel.READ, RiskLevel.PRIVATE_DRAFT)
 
 
 def _read(name: str, toolkit: str, tool_slug: str, agent: AgentRole) -> Capability:
@@ -68,6 +76,32 @@ CAPABILITIES: tuple[Capability, ...] = (
     _write(
         "social.linkedin.post.publish", "linkedin", "LINKEDIN_CREATE_LINKED_IN_POST",
         RiskLevel.PUBLIC, AgentRole.SOCIAL, "linkedin.publish_post",
+    ),
+    _read(
+        "social.facebook.pages.list", "facebook", "FACEBOOK_LIST_MANAGED_PAGES", AgentRole.SOCIAL
+    ),
+    _write(
+        "social.facebook.post.publish", "facebook", "FACEBOOK_CREATE_POST",
+        RiskLevel.PUBLIC, AgentRole.SOCIAL, "facebook.publish_post",
+    ),
+    _write(
+        "social.facebook.photo.publish", "facebook", "FACEBOOK_CREATE_PHOTO_POST",
+        RiskLevel.PUBLIC, AgentRole.SOCIAL, "facebook.publish_photo",
+    ),
+    _read("social.instagram.account.read", "instagram", "INSTAGRAM_GET_USER_INFO", AgentRole.SOCIAL),
+    _read(
+        "social.instagram.quota.read", "instagram",
+        "INSTAGRAM_GET_IG_USER_CONTENT_PUBLISHING_LIMIT", AgentRole.SOCIAL,
+    ),
+    # Second step of the same approved action; it is listed first so the container step
+    # below stays the action's registered tool.
+    _write(
+        "social.instagram.media.publish", "instagram", "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
+        RiskLevel.PUBLIC, AgentRole.SOCIAL, "instagram.publish_photo",
+    ),
+    _write(
+        "social.instagram.media.create", "instagram", "INSTAGRAM_POST_IG_USER_MEDIA",
+        RiskLevel.PUBLIC, AgentRole.SOCIAL, "instagram.publish_photo",
     ),
     _read("research.news.search", "composio_search", "COMPOSIO_SEARCH_NEWS", AgentRole.RESEARCH),
     _read("research.web.search", "composio_search", "COMPOSIO_SEARCH_WEB", AgentRole.RESEARCH),
@@ -120,6 +154,76 @@ CAPABILITIES: tuple[Capability, ...] = (
         "sheets.cell.update", "googlesheets", "GOOGLESHEETS_VALUES_UPDATE",
         RiskLevel.INTERNAL_WRITE, AgentRole.DATA, "sheets.update_cell",
     ),
+    _read("crm.contacts.search", "hubspot", "HUBSPOT_SEARCH_CONTACTS_BY_CRITERIA", AgentRole.CRM),
+    _write(
+        "crm.contact.create", "hubspot", "HUBSPOT_CREATE_CONTACT",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.create_contact",
+    ),
+    _write(
+        "crm.contact.update", "hubspot", "HUBSPOT_UPDATE_CONTACT",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.update_contact",
+    ),
+    _write(
+        "crm.note.create", "hubspot", "HUBSPOT_CREATE_NOTE",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.create_note",
+    ),
+    _read(
+        "crm.salesforce.contacts.search", "salesforce", "SALESFORCE_SEARCH_CONTACTS", AgentRole.CRM
+    ),
+    _read(
+        "crm.salesforce.accounts.search", "salesforce", "SALESFORCE_SEARCH_ACCOUNTS", AgentRole.CRM
+    ),
+    _write(
+        "crm.salesforce.contact.create", "salesforce", "SALESFORCE_CREATE_CONTACT",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.salesforce.create_contact",
+    ),
+    _write(
+        "crm.salesforce.contact.update", "salesforce", "SALESFORCE_UPDATE_CONTACT",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.salesforce.update_contact",
+    ),
+    _write(
+        "crm.salesforce.note.create", "salesforce", "SALESFORCE_CREATE_NOTE",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.salesforce.create_note",
+    ),
+    _read("crm.zoho.contacts.search", "zoho", "ZOHO_SEARCH_CONTACTS", AgentRole.CRM),
+    _write(
+        "crm.zoho.contact.create", "zoho", "ZOHO_CREATE_CONTACT",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.zoho.create_contact",
+    ),
+    _write(
+        "crm.zoho.contact.update", "zoho", "ZOHO_UPDATE_ZOHO_RECORD",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.zoho.update_contact",
+    ),
+    _write(
+        "crm.zoho.note.create", "zoho", "ZOHO_CREATE_NOTE",
+        RiskLevel.INTERNAL_WRITE, AgentRole.CRM, "crm.zoho.create_note",
+    ),
+    _read("design.canva.capabilities.read", "canva", "CANVA_GET_USERS_ME_CAPABILITIES", AgentRole.DESIGN),
+    _read("design.canva.upload.status", "canva", "CANVA_GET_URL_ASSET_UPLOADS_JOBID", AgentRole.DESIGN),
+    _read("design.canva.export.status", "canva", "CANVA_GET_DESIGN_EXPORT_JOB_RESULT", AgentRole.DESIGN),
+    Capability(
+        "design.canva.asset.upload", "canva", "CANVA_CREATE_URL_ASSET_UPLOAD_JOB",
+        RiskLevel.PRIVATE_DRAFT, frozenset({AgentRole.DESIGN}),
+    ),
+    Capability(
+        "design.canva.design.create", "canva", "CANVA_POST_DESIGNS",
+        RiskLevel.PRIVATE_DRAFT, frozenset({AgentRole.DESIGN}),
+    ),
+    Capability(
+        "design.canva.design.export", "canva", "CANVA_POST_EXPORTS",
+        RiskLevel.PRIVATE_DRAFT, frozenset({AgentRole.DESIGN}),
+    ),
+    _read("notion.pages.search", "notion", "NOTION_SEARCH_NOTION_PAGE", AgentRole.KNOWLEDGE),
+    _read("notion.page.metadata", "notion", "NOTION_RETRIEVE_PAGE", AgentRole.KNOWLEDGE),
+    _read("notion.page.read", "notion", "NOTION_GET_PAGE_MARKDOWN", AgentRole.KNOWLEDGE),
+    _write(
+        "notion.page.create", "notion", "NOTION_CREATE_NOTION_PAGE",
+        RiskLevel.INTERNAL_WRITE, AgentRole.KNOWLEDGE, "notion.create_page",
+    ),
+    _write(
+        "notion.page.append", "notion", "NOTION_ADD_MULTIPLE_PAGE_CONTENT",
+        RiskLevel.INTERNAL_WRITE, AgentRole.KNOWLEDGE, "notion.append_content",
+    ),
 )
 
 _BY_NAME = {capability.name: capability for capability in CAPABILITIES}
@@ -146,7 +250,11 @@ def authorize(agent: AgentRole, name: str) -> Capability:
 
 
 def read_tool_slugs() -> frozenset[str]:
-    return frozenset(c.tool_slug for c in CAPABILITIES if not c.is_write)
+    return frozenset(c.tool_slug for c in CAPABILITIES if c.risk is RiskLevel.READ)
+
+
+def draft_tool_slugs() -> frozenset[str]:
+    return frozenset(c.tool_slug for c in CAPABILITIES if c.risk is RiskLevel.PRIVATE_DRAFT)
 
 
 def write_tool_slugs() -> frozenset[str]:

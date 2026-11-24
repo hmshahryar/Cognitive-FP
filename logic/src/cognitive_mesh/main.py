@@ -28,7 +28,12 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     db = Database(settings.database_url, echo=settings.database_echo)
-    gateway = integration_gateway or ComposioGateway(settings.composio_api_key)
+    auth_configs = (
+        {"hubspot": settings.hubspot_auth_config_id} if settings.hubspot_auth_config_id else {}
+    )
+    gateway = integration_gateway or ComposioGateway(
+        settings.composio_api_key, auth_configs=auth_configs
+    )
     signer = (
         ApprovalSigner(settings.approval_signing_key) if settings.approval_signing_key else None
     )

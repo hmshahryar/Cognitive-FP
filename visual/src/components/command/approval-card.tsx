@@ -10,15 +10,21 @@ import {
   type FormState,
 } from "@/app/command/actions";
 import { CalendarApprovalDetails } from "@/components/command/calendar-approval-details";
+import { CrmApprovalDetails } from "@/components/command/crm-approval-details";
 import { EmailApprovalDetails } from "@/components/command/email-approval-details";
+import { NotionApprovalDetails } from "@/components/command/notion-approval-details";
 import { QualityPanel } from "@/components/command/quality-panel";
 import { SheetApprovalDetails } from "@/components/command/sheet-approval-details";
+import { SocialApprovalDetails } from "@/components/command/social-approval-details";
 import { Button } from "@/components/ui/button";
 import type {
   Approval,
   CalendarActionType,
+  CrmActionType,
   Draft,
+  NotionActionType,
   SheetActionType,
+  SocialActionType,
   Visibility,
 } from "@/lib/command";
 
@@ -91,6 +97,90 @@ const COPY: Record<
     note: "Approving replaces the current value right away.",
     canRevise: false,
   },
+  "crm.create_contact": {
+    title: "Add this HubSpot contact?",
+    button: "Approve and add",
+    note: "I checked HubSpot and found no contact with this email. Approving creates it now.",
+    canRevise: false,
+  },
+  "crm.update_contact": {
+    title: "Update this HubSpot contact?",
+    button: "Approve and update",
+    note: "Approving changes only the fields shown here.",
+    canRevise: false,
+  },
+  "crm.create_note": {
+    title: "Add this note in HubSpot?",
+    button: "Approve and add note",
+    note: "Approving adds exactly this note to the contact's timeline.",
+    canRevise: false,
+  },
+  "crm.salesforce.create_contact": {
+    title: "Add this Salesforce contact?",
+    button: "Approve and add",
+    note: "I checked Salesforce and found no contact with this email. Approving creates it now.",
+    canRevise: false,
+  },
+  "crm.salesforce.update_contact": {
+    title: "Update this Salesforce contact?",
+    button: "Approve and update",
+    note: "Approving changes only the fields shown here.",
+    canRevise: false,
+  },
+  "crm.salesforce.create_note": {
+    title: "Add this note in Salesforce?",
+    button: "Approve and add note",
+    note: "Approving adds exactly this note to the contact's Notes.",
+    canRevise: false,
+  },
+  "crm.zoho.create_contact": {
+    title: "Add this Zoho CRM contact?",
+    button: "Approve and add",
+    note: "I checked Zoho CRM and found no contact with this email. Approving creates it now and skips Zoho automations.",
+    canRevise: false,
+  },
+  "crm.zoho.update_contact": {
+    title: "Update this Zoho CRM contact?",
+    button: "Approve and update",
+    note: "Approving changes only the fields shown here and skips Zoho automations.",
+    canRevise: false,
+  },
+  "crm.zoho.create_note": {
+    title: "Add this note in Zoho CRM?",
+    button: "Approve and add note",
+    note: "Approving adds exactly this note to the contact's Notes.",
+    canRevise: false,
+  },
+  "notion.create_page": {
+    title: "Create this Notion page?",
+    button: "Approve and create",
+    note: "Approving creates exactly this page under the page shown.",
+    canRevise: false,
+  },
+  "notion.append_content": {
+    title: "Add this to the Notion page?",
+    button: "Approve and add",
+    note: "Approving adds exactly this content to the end of the page. Existing content stays.",
+    canRevise: false,
+  },
+  "facebook.publish_post": {
+    title: "Publish this on your Facebook Page?",
+    button: "Approve and publish",
+    note: "Approving publishes exactly this text on the Page right away. Anyone can see it.",
+    canRevise: false,
+  },
+  "facebook.publish_photo": {
+    title: "Publish this photo on your Facebook Page?",
+    button: "Approve and publish",
+    note: "Approving publishes exactly this image and text on the Page right away. Anyone can see it.",
+    canRevise: false,
+  },
+  "instagram.publish_photo": {
+    title: "Publish this on Instagram?",
+    button: "Approve and publish",
+    note: "Approving publishes exactly this image and caption right away. Anyone can see it.",
+    canRevise: false,
+  },
 };
 
 const isSheet = (a: Approval): a is Extract<Approval, { action_type: SheetActionType }> =>
@@ -98,6 +188,15 @@ const isSheet = (a: Approval): a is Extract<Approval, { action_type: SheetAction
 
 const isCalendar = (a: Approval): a is Extract<Approval, { action_type: CalendarActionType }> =>
   a.action_type.startsWith("calendar.");
+
+const isCrm = (a: Approval): a is Extract<Approval, { action_type: CrmActionType }> =>
+  a.action_type.startsWith("crm.");
+
+const isNotion = (a: Approval): a is Extract<Approval, { action_type: NotionActionType }> =>
+  a.action_type.startsWith("notion.");
+
+const isSocial = (a: Approval): a is Extract<Approval, { action_type: SocialActionType }> =>
+  a.action_type.startsWith("facebook.") || a.action_type.startsWith("instagram.");
 
 /** Consent screen for one exact action. Approving runs this exact version once. */
 export function ApprovalCard({
@@ -185,6 +284,21 @@ export function ApprovalCard({
         <>
           <p className="text-sm text-muted-foreground">{copy.note}</p>
           <CalendarApprovalDetails actionType={approval.action_type} payload={approval.payload} />
+        </>
+      ) : isCrm(approval) ? (
+        <>
+          <p className="text-sm text-muted-foreground">{copy.note}</p>
+          <CrmApprovalDetails actionType={approval.action_type} payload={approval.payload} />
+        </>
+      ) : isNotion(approval) ? (
+        <>
+          <p className="text-sm text-muted-foreground">{copy.note}</p>
+          <NotionApprovalDetails actionType={approval.action_type} payload={approval.payload} />
+        </>
+      ) : isSocial(approval) ? (
+        <>
+          <p className="text-sm text-muted-foreground">{copy.note}</p>
+          <SocialApprovalDetails actionType={approval.action_type} payload={approval.payload} />
         </>
       ) : (
         <>

@@ -13,6 +13,27 @@ export function DraftSummary({ drafts }: { drafts: Draft[] }) {
       </p>
     );
   }
+  if (final.research.mode === "crm") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        CRM change · version {final.version}
+      </p>
+    );
+  }
+  if (final.research.mode === "social") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        Draft v{final.version} · your exact text
+      </p>
+    );
+  }
+  if (final.research.mode === "notion") {
+    return (
+      <p className="border-t pt-3 text-xs text-muted-foreground">
+        Notion change · version {final.version}
+      </p>
+    );
+  }
   if (final.research.mode === "calendar") {
     return (
       <p className="border-t pt-3 text-xs text-muted-foreground">

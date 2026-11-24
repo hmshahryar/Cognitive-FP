@@ -79,14 +79,31 @@ class EmailDraft(BaseModel):
 class ManagerDecision(BaseModel):
     """Which specialist should handle a message. Code validates this before anything runs."""
 
-    target: Literal["calendar", "gmail", "linkedin", "sheets", "clarify", "unsupported"] = Field(
+    target: Literal[
+        "calendar", "gmail", "linkedin", "sheets", "crm", "clarify", "unsupported"
+    ] = Field(
         description="The specialist for this request, clarify if unclear, unsupported otherwise."
     )
     action: Literal[
         "none", "list", "free", "create", "reschedule", "cancel", "write_email",
         "forward_email", "trash_email", "write_post", "research_post", "sheet_list",
-        "sheet_read", "sheet_create", "sheet_append", "sheet_update",
+        "sheet_read", "sheet_create", "sheet_append", "sheet_update", "crm_find", "crm_create",
+        "crm_update", "crm_note",
     ] = Field(default="none", description="The specialist's action.")
+    contact_email: str = Field(
+        default="", max_length=254, description="For crm: the email exactly as the user wrote it."
+    )
+    contact_query: str = Field(
+        default="", max_length=100, description="For crm_find: the name the user gave."
+    )
+    first_name: str = Field(default="", max_length=100, description="For crm: exact first name.")
+    last_name: str = Field(default="", max_length=100, description="For crm: exact last name.")
+    phone: str = Field(default="", max_length=40, description="For crm: exact phone number.")
+    company: str = Field(default="", max_length=200, description="For crm: exact company name.")
+    job_title: str = Field(default="", max_length=200, description="For crm: exact job title.")
+    note_text: str = Field(
+        default="", max_length=2000, description="For crm_note: the note in the user's words."
+    )
     sheet_name: str = Field(
         default="", max_length=120, description="For sheets: the spreadsheet name the user gave."
     )

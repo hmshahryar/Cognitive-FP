@@ -25,10 +25,13 @@ from cognitive_mesh.workflows.command_graph.context import GraphDeps, NodeContex
 from cognitive_mesh.workflows.command_graph.nodes.approval_nodes import build_approval_nodes
 from cognitive_mesh.workflows.command_graph.nodes.calendar_node import build_calendar_nodes
 from cognitive_mesh.workflows.command_graph.nodes.content_nodes import build_content_nodes
+from cognitive_mesh.workflows.command_graph.nodes.crm_node import build_crm_nodes
 from cognitive_mesh.workflows.command_graph.nodes.email_node import build_email_nodes
+from cognitive_mesh.workflows.command_graph.nodes.notion_node import build_notion_nodes
 from cognitive_mesh.workflows.command_graph.nodes.publish_node import build_publish_nodes
 from cognitive_mesh.workflows.command_graph.nodes.routing_node import build_routing_nodes
 from cognitive_mesh.workflows.command_graph.nodes.sheets_node import build_sheets_nodes
+from cognitive_mesh.workflows.command_graph.nodes.social_node import build_social_nodes
 from cognitive_mesh.workflows.command_graph.state import TERMINAL_OUTCOMES, GraphState
 
 
@@ -40,6 +43,9 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         **build_email_nodes(ctx),
         **build_calendar_nodes(ctx),
         **build_sheets_nodes(ctx),
+        **build_crm_nodes(ctx),
+        **build_notion_nodes(ctx),
+        **build_social_nodes(ctx),
         **build_approval_nodes(ctx),
         **build_publish_nodes(ctx),
     }
@@ -54,6 +60,7 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         if outcome == "changes":
             return {
                 "gmail": "gmail_action", "calendar": "calendar_action", "sheets": "sheets_action",
+                "crm": "crm_action", "notion": "notion_action", "social": "social_action",
             }.get(
                 state.get("mode", ""), "write"
             )
@@ -72,6 +79,9 @@ def build_graph(deps: GraphDeps) -> StateGraph:
             "gmail": "gmail_action",
             "calendar": "calendar_action",
             "sheets": "sheets_action",
+            "crm": "crm_action",
+            "notion": "notion_action",
+            "social": "social_action",
         }
         return nodes.get(state["mode"], "research")
 
@@ -83,9 +93,18 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         "prepare",
         after_prepare,
         [
-            "use_provided_text", "gmail_action", "calendar_action", "sheets_action", "write",
-            "research", END,
+            "use_provided_text", "gmail_action", "calendar_action", "sheets_action", "crm_action",
+            "notion_action", "social_action", "write", "research", END,
         ],
+    )
+    graph.add_conditional_edges(
+        "social_action", stop_or("request_approval"), ["request_approval", END]
+    )
+    graph.add_conditional_edges(
+        "crm_action", stop_or("request_approval"), ["request_approval", END]
+    )
+    graph.add_conditional_edges(
+        "notion_action", stop_or("request_approval"), ["request_approval", END]
     )
     graph.add_conditional_edges(
         "sheets_action", stop_or("request_approval"), ["request_approval", END]
@@ -106,8 +125,8 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         "decide",
         after_decide,
         [
-            "write", "gmail_action", "calendar_action", "sheets_action", "request_approval",
-            "publish", END,
+            "write", "gmail_action", "calendar_action", "sheets_action", "crm_action",
+            "notion_action", "social_action", "request_approval", "publish", END,
         ],
     )
     graph.add_edge("publish", END)

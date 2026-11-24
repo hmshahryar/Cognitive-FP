@@ -12,6 +12,7 @@ from cognitive_mesh.auth import VerifiedIdentity, verify_clerk_session
 from cognitive_mesh.config import PROJECT_ROOT, Settings
 from cognitive_mesh.integrations.gateway import (
     APPROVED_ACTION_TOOLS,
+    PRIVATE_DRAFT_TOOLS,
     READ_ONLY_TOOLS,
     ConnectedAccountInfo,
     ConnectionStart,
@@ -73,6 +74,53 @@ class FakeGateway:
         self.sheet_tabs: list[str] = ["Sheet1"]
         self.sheet_values: list[list[str]] = []
         self.sheet_reads: list[str] = []
+        self.hubspot_contacts: list[dict] = []
+        self.hubspot_searches: list[dict] = []
+        self.salesforce_contacts: list[dict] = []
+        self.salesforce_accounts: list[dict] = []
+        self.salesforce_searches: list[dict] = []
+        self.auth_scopes: dict[str, tuple[str, ...]] = {
+            "hubspot": ("crm.objects.contacts.read", "crm.objects.contacts.write", "oauth"),
+            "salesforce": ("api", "refresh_token"),
+            "facebook": ("pages_manage_posts", "pages_read_engagement", "pages_show_list"),
+            "instagram": ("instagram_business_basic", "instagram_business_content_publish"),
+            "canva": (
+                "asset:read", "asset:write", "brandtemplate:content:read",
+                "brandtemplate:meta:read", "design:content:read", "design:content:write",
+                "design:meta:read", "profile:read",
+            ),
+            "zoho": (
+                "ZohoCRM.modules.contacts.CREATE", "ZohoCRM.modules.contacts.READ",
+                "ZohoCRM.modules.contacts.UPDATE", "ZohoCRM.modules.notes.CREATE",
+                "ZohoSearch.securesearch.READ",
+            ),
+        }
+        self.zoho_contacts: list[dict] = []
+        self.zoho_searches: list[dict] = []
+        self.notion_pages: list[dict] = []
+        self.notion_markdown = ""
+        self.facebook_pages: list[dict] = []
+        self.instagram_account: dict = {
+            "user_id": "17841400000000001", "username": "cognitive.mesh", "account_type": "BUSINESS",
+        }
+        self.instagram_quota: dict = {"data": [{"quota_usage": 2, "config": {"quota_total": 100}}]}
+        self.publish_responses: list[dict] = []  # consumed in order before publish_response
+        self.draft_uploads: list[tuple] = []
+        self.draft_calls: list[tuple[str, dict]] = []
+        self.canva_responses: dict[str, dict] = {
+            "CANVA_CREATE_URL_ASSET_UPLOAD_JOB": {"job": {"id": "up1", "status": "in_progress"}},
+            "CANVA_GET_URL_ASSET_UPLOADS_JOBID": {
+                "job": {"id": "up1", "status": "success", "asset": {"id": "Msd123"}}
+            },
+            "CANVA_POST_DESIGNS": {
+                "design": {"id": "DAF123", "urls": {"edit_url": "https://www.canva.com/design/DAF123/edit"}}
+            },
+            "CANVA_POST_EXPORTS": {"job": {"id": "ex1", "status": "in_progress"}},
+            "CANVA_GET_DESIGN_EXPORT_JOB_RESULT": {
+                "job": {"id": "ex1", "status": "success",
+                        "urls": ["https://export-download.canva.com/banner.jpg"]}
+            },
+        }
         self._n = 0
 
     def _check(self) -> None:
@@ -98,6 +146,10 @@ class FakeGateway:
         )
         self.started.append({"user_id": user_id, "slug": toolkit_slug, "callback": callback_url})
         return ConnectionStart(acc_id, f"https://connect.composio.dev/link/ln_{self._n}")
+
+    async def auth_config_scopes(self, toolkit_slug: str) -> tuple[str, ...] | None:
+        self._check()
+        return self.auth_scopes.get(toolkit_slug)
 
     def finish_oauth(
         self,
@@ -155,7 +207,51 @@ class FakeGateway:
         if tool_slug == "GOOGLESHEETS_VALUES_GET":
             self.sheet_reads.append(arguments["range"])
             return {"range": arguments["range"], "values": self.sheet_values}
+        if tool_slug == "HUBSPOT_SEARCH_CONTACTS_BY_CRITERIA":
+            self.hubspot_searches.append(dict(arguments))
+            return {"results": list(self.hubspot_contacts)}
+        if tool_slug == "SALESFORCE_SEARCH_CONTACTS":
+            self.salesforce_searches.append(dict(arguments))
+            rows = list(self.salesforce_contacts)
+            return {"totalSize": len(rows), "done": True, "records": rows}
+        if tool_slug == "ZOHO_SEARCH_CONTACTS":
+            self.zoho_searches.append(dict(arguments))
+            rows = list(self.zoho_contacts)
+            return {"data": rows, "info": {"count": len(rows), "more_records": False}}
+        if tool_slug == "SALESFORCE_SEARCH_ACCOUNTS":
+            rows = list(self.salesforce_accounts)
+            return {"totalSize": len(rows), "done": True, "records": rows}
+        if tool_slug == "NOTION_SEARCH_NOTION_PAGE":
+            return {"results": list(self.notion_pages), "has_more": False, "next_cursor": None}
+        if tool_slug == "NOTION_RETRIEVE_PAGE":
+            return next(p for p in self.notion_pages if p["id"] == arguments["page_id"])
+        if tool_slug == "NOTION_GET_PAGE_MARKDOWN":
+            return {"object": "page_markdown", "id": arguments["page_id"],
+                    "markdown": self.notion_markdown, "truncated": False, "unknown_block_ids": []}
+        if tool_slug == "FACEBOOK_LIST_MANAGED_PAGES":
+            return {"data": list(self.facebook_pages), "paging": {"cursors": {}}}
+        if tool_slug == "INSTAGRAM_GET_USER_INFO":
+            return dict(self.instagram_account)
+        if tool_slug == "INSTAGRAM_GET_IG_USER_CONTENT_PUBLISHING_LIMIT":
+            return self.instagram_quota
         return {}
+
+    async def run_private_draft(self, *, user_id, toolkit_slug, work):  # type: ignore[no-untyped-def]
+        self._check()
+        gateway = self
+
+        class Session:
+            def upload(self, content: bytes, *, filename: str, mimetype: str) -> str:
+                gateway.draft_uploads.append((user_id, toolkit_slug, len(content), mimetype))
+                return f"https://files.composio.example/{filename}"
+
+            def run(self, tool_slug: str, arguments: dict) -> dict:
+                if tool_slug not in PRIVATE_DRAFT_TOOLS | READ_ONLY_TOOLS:
+                    raise ToolNotAllowedError(tool_slug)
+                gateway.draft_calls.append((tool_slug, dict(arguments)))
+                return gateway.canva_responses[tool_slug]
+
+        return work(Session())
 
     async def execute_approved_action(  # type: ignore[no-untyped-def]
         self, *, user_id, toolkit_slug, tool_slug, connected_account_id, arguments
@@ -166,6 +262,11 @@ class FakeGateway:
             {"user_id": user_id, "tool": tool_slug, "account": connected_account_id,
              "arguments": dict(arguments)}
         )
+        if self.publish_responses:
+            step = self.publish_responses.pop(0)
+            if isinstance(step, BaseException):
+                raise step
+            return step
         if self.publish_error is not None:
             raise self.publish_error
         return self.publish_response or {"x_restli_id": f"urn:li:share:{7000 + len(self.publish_calls)}"}

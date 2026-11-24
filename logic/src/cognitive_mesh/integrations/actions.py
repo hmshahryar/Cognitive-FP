@@ -7,11 +7,22 @@ To add an app action (Calendar, Drive, Sheets, WhatsApp Business, Slack, HubSpot
 Approval signing, one-time use, execution records and recovery then apply automatically.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cognitive_mesh.integrations import gmail, google_calendar, google_sheets, linkedin
+from cognitive_mesh.integrations import (
+    facebook,
+    gmail,
+    google_calendar,
+    google_sheets,
+    hubspot,
+    instagram,
+    linkedin,
+    notion,
+    salesforce,
+    zoho,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +42,16 @@ class ActionSpec:
     # Optional second call that completes this one approved action.
     follow_up: Callable[[dict[str, Any], Any], google_sheets.FollowUp | None] | None = None
     follow_up_failed: str = ""
+    # Only for providers with no OAuth scopes. An empty scope list alone never skips the check.
+    provider_has_no_scopes: bool = False
+    # Runs right before sending. Raising ActionRejectedError stops the action with nothing sent.
+    pre_check: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    # When set, the follow-up completes the action: its result is the outcome, and its failure
+    # means the action did not happen (or is unknown), never "done with a note".
+    follow_up_result_id: Callable[[Any], str | None] | None = None
+
+    def is_permitted(self, granted: set[str]) -> bool:
+        return self.provider_has_no_scopes or bool(granted & set(self.any_scopes))
 
 
 def _email_arguments(payload: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +148,101 @@ def _sheet_spec(
     )
 
 
+def _crm_spec(
+    action_type: str,
+    tool: str,
+    validate: Callable[[dict[str, Any]], None],
+    done: str,
+    app: str = "HubSpot",
+    module: Any = hubspot,
+    scopes: tuple[str, ...] | None = None,
+) -> ActionSpec:
+    return ActionSpec(
+        action_type=action_type,
+        app=app,
+        toolkit=module.TOOLKIT,
+        tool_slug=tool,
+        any_scopes=scopes or module.WRITE_SCOPES,
+        validate=validate,
+        arguments=_email_arguments,
+        result_id=module.result_id,
+        result_url=module.no_url,
+        done_message=done,
+        failed_message=(
+            f"{app} did not complete this action, so nothing changed. "
+            "Press Retry to prepare it for your approval again."
+        ),
+        unknown_message=(
+            f"I can't confirm whether {app} completed this because the result was lost. "
+            f"Check the contact in {app} before trying again. I will not repeat it automatically."
+        ),
+    )
+
+
+def _notion_spec(
+    action_type: str,
+    tool: str,
+    validate: Callable[[dict[str, Any]], None],
+    done: str,
+    result_id: Callable[[Any], str | None],
+    result_url: Callable[[Any, str | None], str | None],
+) -> ActionSpec:
+    return ActionSpec(
+        action_type=action_type,
+        app="Notion",
+        toolkit=notion.TOOLKIT,
+        tool_slug=tool,
+        any_scopes=(),
+        validate=validate,
+        arguments=_email_arguments,
+        result_id=result_id,
+        result_url=result_url,
+        done_message=done,
+        failed_message=(
+            "Notion did not complete this action, so nothing changed. "
+            "Press Retry to prepare it for your approval again."
+        ),
+        unknown_message=(
+            "I can't confirm whether Notion completed this because the result was lost. "
+            "Check the page in Notion before trying again. I will not repeat it automatically."
+        ),
+        provider_has_no_scopes=True,
+    )
+
+
+def _social_spec(
+    action_type: str,
+    app: str,
+    module: Any,
+    tool: str,
+    validate: Callable[[dict[str, Any]], None],
+    result_id: Callable[[Any], str | None],
+    result_url: Callable[[Any, str | None], str | None],
+    **extra: Any,
+) -> ActionSpec:
+    return ActionSpec(
+        action_type=action_type,
+        app=app,
+        toolkit=module.TOOLKIT,
+        tool_slug=tool,
+        any_scopes=module.WRITE_SCOPES,
+        validate=validate,
+        arguments=_email_arguments,
+        result_id=result_id,
+        result_url=result_url,
+        done_message=f"Published on {app}",
+        failed_message=(
+            f"{app} did not publish this post, so nothing went live. "
+            "Press Retry to prepare it for your approval again."
+        ),
+        unknown_message=(
+            f"I can't confirm whether this post went live on {app} because the result was lost. "
+            f"Check {app} before posting it again. I will not resend it automatically."
+        ),
+        **extra,
+    )
+
+
 ACTIONS: dict[str, ActionSpec] = {
     spec.action_type: spec
     for spec in (
@@ -191,6 +307,65 @@ ACTIONS: dict[str, ActionSpec] = {
         _sheet_spec(
             google_sheets.UPDATE_ACTION, google_sheets.UPDATE_TOOL, google_sheets.validate_update,
             "Cell updated",
+        ),
+        _crm_spec(
+            hubspot.CREATE_ACTION, hubspot.CREATE_TOOL, hubspot.validate_create, "Contact created"
+        ),
+        _crm_spec(
+            hubspot.UPDATE_ACTION, hubspot.UPDATE_TOOL, hubspot.validate_update, "Contact updated"
+        ),
+        _crm_spec(hubspot.NOTE_ACTION, hubspot.NOTE_TOOL, hubspot.validate_note, "Note added"),
+        _crm_spec(
+            salesforce.CREATE_ACTION, salesforce.CREATE_TOOL, salesforce.validate_create,
+            "Contact created", "Salesforce", salesforce,
+        ),
+        _crm_spec(
+            salesforce.UPDATE_ACTION, salesforce.UPDATE_TOOL, salesforce.validate_update,
+            "Contact updated", "Salesforce", salesforce,
+        ),
+        _crm_spec(
+            salesforce.NOTE_ACTION, salesforce.NOTE_TOOL, salesforce.validate_note,
+            "Note added", "Salesforce", salesforce,
+        ),
+        _crm_spec(
+            zoho.CREATE_ACTION, zoho.CREATE_TOOL, zoho.validate_create, "Contact created",
+            "Zoho CRM", zoho, zoho.CREATE_SCOPES,
+        ),
+        _crm_spec(
+            zoho.UPDATE_ACTION, zoho.UPDATE_TOOL, zoho.validate_update, "Contact updated",
+            "Zoho CRM", zoho, zoho.UPDATE_SCOPES,
+        ),
+        _crm_spec(
+            zoho.NOTE_ACTION, zoho.NOTE_TOOL, zoho.validate_note, "Note added",
+            "Zoho CRM", zoho, zoho.NOTE_SCOPES,
+        ),
+        _notion_spec(
+            notion.CREATE_ACTION, notion.CREATE_TOOL, notion.validate_create, "Page created",
+            notion.create_result_id, notion.create_result_url,
+        ),
+        _notion_spec(
+            notion.APPEND_ACTION, notion.APPEND_TOOL, notion.validate_append, "Content added",
+            notion.append_result_id, notion.no_url,
+        ),
+        _social_spec(
+            facebook.POST_ACTION, "Facebook", facebook, facebook.POST_TOOL,
+            facebook.validate_post, facebook.post_result_id, facebook.result_url,
+        ),
+        _social_spec(
+            facebook.PHOTO_ACTION, "Facebook", facebook, facebook.PHOTO_TOOL,
+            facebook.validate_photo, facebook.photo_result_id, facebook.result_url,
+            pre_check=facebook.check_photo_unchanged,
+        ),
+        _social_spec(
+            instagram.PHOTO_ACTION, "Instagram", instagram, instagram.CONTAINER_TOOL,
+            instagram.validate_photo, instagram.container_id, instagram.no_url,
+            pre_check=instagram.check_photo_unchanged,
+            follow_up=instagram.publish_step,
+            follow_up_result_id=instagram.media_id,
+            follow_up_failed=(
+                "Instagram prepared the post but didn't confirm publishing it. "
+                "Check your Instagram profile before trying again."
+            ),
         ),
     )
 }

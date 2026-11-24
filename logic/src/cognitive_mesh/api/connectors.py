@@ -29,6 +29,10 @@ SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 _ERRORS: dict[type[Exception], tuple[int, str]] = {
     svc.ConnectorNotFoundError: (status.HTTP_404_NOT_FOUND, "Unknown connector"),
     svc.ConnectorUnavailableError: (status.HTTP_409_CONFLICT, "This connector is coming soon"),
+    svc.ConnectorPermissionsError: (
+        status.HTTP_409_CONFLICT,
+        "This connection isn't set up with limited permissions yet, so it was not started",
+    ),
     svc.AttemptNotFoundError: (status.HTTP_404_NOT_FOUND, "Connection attempt not found"),
     svc.AttemptExpiredError: (status.HTTP_410_GONE, "Connection attempt expired; try again"),
     svc.CallbackVerificationError: (

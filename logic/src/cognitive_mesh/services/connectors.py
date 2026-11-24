@@ -50,6 +50,10 @@ class ConnectorUnavailableError(ConnectorError):
     """The app is listed but not enabled yet ("coming soon")."""
 
 
+class ConnectorPermissionsError(ConnectorError):
+    """The connection would ask for more access than this app uses."""
+
+
 class AttemptNotFoundError(ConnectorError):
     pass
 
@@ -196,6 +200,10 @@ async def start_connection(
     spec = _require_spec(slug)
     if not spec.available:
         raise ConnectorUnavailableError(slug)
+    if spec.allowed_scopes:
+        requested = await gateway.auth_config_scopes(slug)
+        if not requested or not set(requested) <= set(spec.allowed_scopes):
+            raise ConnectorPermissionsError(slug)
 
     attempt = ConnectionAttempt(
         id=uuid7(),

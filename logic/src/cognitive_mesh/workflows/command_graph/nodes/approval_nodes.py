@@ -4,7 +4,18 @@ import uuid
 
 from langgraph.types import interrupt
 
-from cognitive_mesh.integrations import gmail, google_calendar, google_sheets, linkedin
+from cognitive_mesh.integrations import (
+    facebook,
+    gmail,
+    google_calendar,
+    google_sheets,
+    hubspot,
+    instagram,
+    linkedin,
+    notion,
+    salesforce,
+    zoho,
+)
 from cognitive_mesh.integrations.actions import get_action
 from cognitive_mesh.models import ApprovalStatus, Execution, Task, TaskStatus
 from cognitive_mesh.services import approvals as approval_svc
@@ -13,9 +24,15 @@ from cognitive_mesh.services.errors import ConfigurationError
 from cognitive_mesh.workflows.command_graph.context import NodeContext, NodeFunction
 from cognitive_mesh.workflows.command_graph.messages import (
     CALENDAR_NOT_CONNECTED,
+    FACEBOOK_NOT_CONNECTED,
     GMAIL_NOT_CONNECTED,
+    HUBSPOT_NOT_CONNECTED,
+    INSTAGRAM_NOT_CONNECTED,
     NOT_CONNECTED,
+    NOTION_NOT_CONNECTED,
+    SALESFORCE_NOT_CONNECTED,
     SHEETS_NOT_CONNECTED,
+    ZOHO_NOT_CONNECTED,
 )
 from cognitive_mesh.workflows.command_graph.state import GraphState
 
@@ -52,6 +69,12 @@ def build_approval_nodes(ctx: NodeContext) -> dict[str, NodeFunction]:
                         gmail.TOOLKIT: GMAIL_NOT_CONNECTED,
                         google_calendar.TOOLKIT: CALENDAR_NOT_CONNECTED,
                         google_sheets.TOOLKIT: SHEETS_NOT_CONNECTED,
+                        hubspot.TOOLKIT: HUBSPOT_NOT_CONNECTED,
+                        salesforce.TOOLKIT: SALESFORCE_NOT_CONNECTED,
+                        zoho.TOOLKIT: ZOHO_NOT_CONNECTED,
+                        notion.TOOLKIT: NOTION_NOT_CONNECTED,
+                        facebook.TOOLKIT: FACEBOOK_NOT_CONNECTED,
+                        instagram.TOOLKIT: INSTAGRAM_NOT_CONNECTED,
                     }.get(action.toolkit, NOT_CONNECTED)
                     return await fail(state, message, f"{action.toolkit} disconnected")
                 if action.action_type == linkedin.ACTION_TYPE:

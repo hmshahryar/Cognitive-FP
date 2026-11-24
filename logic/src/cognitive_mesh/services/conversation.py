@@ -40,6 +40,7 @@ from cognitive_mesh.workflows.command_router import (
     route_command,
     with_platform,
 )
+from cognitive_mesh.workflows.crm_commands import continue_crm, crm_from_dict
 from cognitive_mesh.workflows.email_commands import (
     apply_contact,
     continue_email,
@@ -47,7 +48,9 @@ from cognitive_mesh.workflows.email_commands import (
 )
 from cognitive_mesh.workflows.manager_routing import route_from_decision
 from cognitive_mesh.workflows.memory_commands import MemoryCommand, memory_from_dict
+from cognitive_mesh.workflows.notion_commands import continue_notion, notion_from_dict
 from cognitive_mesh.workflows.sheet_commands import continue_sheet, sheet_from_dict
+from cognitive_mesh.workflows.social_commands import continue_social, social_from_dict
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,10 @@ MAX_CONTEXT_MESSAGE_CHARS = 500
 MAX_CONTEXT_CHARS = 4000
 MAX_TRANSCRIPT_MESSAGE_CHARS = 800
 _CANCEL_WORDS = {"cancel", "stop", "never mind", "nevermind", "forget it"}
-_NEW_COMMAND_ACTIONS = {"post_as_is", "write", "research", "gmail", "calendar", "sheets"}
+_NEW_COMMAND_ACTIONS = {
+    "post_as_is", "write", "research", "gmail", "calendar", "sheets", "crm", "notion", "social",
+}
+_SOCIAL_LABELS = {"facebook": "Facebook agent · Page post", "instagram": "Instagram agent · Post"}
 CANCELLED_REPLY = "Okay, I dropped that command. Nothing was sent or changed."
 MAX_SUPERVISOR_MESSAGES = 3
 ManagerDecide = Callable[[str, str], Awaitable[ManagerDecision]]
@@ -74,6 +80,19 @@ _SHEET_LABELS = {
     "create": "Sheets agent · Create sheet",
     "append": "Sheets agent · Add rows",
     "update": "Sheets agent · Update cell",
+}
+_CRM_LABELS = {
+    "find": "CRM agent · Find contact",
+    "create": "CRM agent · Add contact",
+    "update": "CRM agent · Update contact",
+    "note": "CRM agent · Add note",
+}
+_NOTION_LABELS = {
+    "find": "Notion agent · Find pages",
+    "read": "Notion agent · Read page",
+    "create": "Notion agent · Create page",
+    "append": "Notion agent · Add content",
+    "help": "Notion agent",
 }
 _EMAIL_LABELS = {
     "send": "Email agent · Send exact email",
@@ -116,6 +135,9 @@ def _route_to_dict(
         "memory": asdict(route.memory) if route.memory else None,
         "calendar": asdict(route.calendar) if route.calendar else None,
         "sheet": asdict(route.sheet) if route.sheet else None,
+        "crm": asdict(route.crm) if route.crm else None,
+        "notion": asdict(route.notion) if route.notion else None,
+        "social": asdict(route.social) if route.social else None,
         "reply": reply,
     }
 
@@ -129,6 +151,9 @@ def _resolution_from_dict(data: dict[str, Any]) -> Resolution:
         memory=memory_from_dict(data["memory"]) if data["memory"] else None,
         calendar=calendar_from_dict(data["calendar"]) if data.get("calendar") else None,
         sheet=sheet_from_dict(data["sheet"]) if data.get("sheet") else None,
+        crm=crm_from_dict(data["crm"]) if data.get("crm") else None,
+        notion=notion_from_dict(data["notion"]) if data.get("notion") else None,
+        social=social_from_dict(data["social"]) if data.get("social") else None,
     )
     return Resolution(
         data["command"], route, data.get("reply"), data.get("routed_by", "rules")
@@ -144,6 +169,14 @@ def route_label(data: dict[str, Any] | None) -> str | None:
         return _CALENDAR_LABELS.get(data["calendar"]["kind"])
     if action == "sheets" and data.get("sheet"):
         return _SHEET_LABELS.get(data["sheet"]["kind"])
+    if action == "crm" and data.get("crm"):
+        return _CRM_LABELS.get(data["crm"]["kind"])
+    if action == "notion" and data.get("notion"):
+        return _NOTION_LABELS.get(data["notion"]["kind"])
+    if action == "social" and data.get("social"):
+        if data["social"].get("kind") == "banner":
+            return "Design agent · Canva banner"
+        return _SOCIAL_LABELS.get(data["social"]["platform"])
     if action == "gmail" and data.get("email"):
         return _EMAIL_LABELS.get(data["email"]["kind"])
     return _POST_LABELS.get(str(action))
@@ -162,6 +195,15 @@ def _pending_for(command: str, route: Route) -> dict[str, Any] | None:
     if route.action == "sheets":
         waiting = route.sheet and route.sheet.missing
         return _route_to_dict(command, route) if waiting else None
+    if route.action == "crm":
+        waiting = route.crm and route.crm.missing
+        return _route_to_dict(command, route) if waiting else None
+    if route.action == "notion":
+        waiting = route.notion and route.notion.missing
+        return _route_to_dict(command, route) if waiting else None
+    if route.action == "social":
+        waiting = route.social and route.social.missing
+        return _route_to_dict(command, route) if waiting else None
     missing_text = route.action == "post_as_is" and not route.text
     return _route_to_dict(command, route) if missing_text or needs_platform(route) else None
 
@@ -176,6 +218,14 @@ def _continue(pending: dict[str, Any], reply: str) -> Resolution:
         return replace(earlier, route=replace(route, calendar=updated))
     if route.action == "sheets" and route.sheet:
         return replace(earlier, route=replace(route, sheet=continue_sheet(route.sheet, reply)))
+    if route.action == "crm" and route.crm:
+        return replace(earlier, route=replace(route, crm=continue_crm(route.crm, reply)))
+    if route.action == "notion" and route.notion:
+        updated_notion = continue_notion(route.notion, reply)
+        return replace(earlier, route=replace(route, notion=updated_notion))
+    if route.action == "social" and route.social:
+        updated_social = continue_social(route.social, reply)
+        return replace(earlier, route=replace(route, social=updated_social))
     if route.action == "post_as_is" and not route.text:
         route = replace(route, text=reply.strip())
     elif not route.platforms:

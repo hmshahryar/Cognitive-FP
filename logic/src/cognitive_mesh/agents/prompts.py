@@ -76,6 +76,8 @@ Specialists:
   means rows [["Ali"]]; it is not the sheet's title. Leave sheet_name empty if none is given.
   "Make two columns, one for name and one for Ali" on an active sheet is sheet_append with
   rows [["Name", "Ali"]] and use_active_item=true.
+- crm (HubSpot, Salesforce and Zoho CRM contacts): crm_find, crm_create, crm_update, crm_note. Copy contact details
+  exactly from the message into their fields. Never invent or infer an email or phone.
 
 Chat state:
 - Set use_active_item=true when words such as "it", "that sheet" or a follow-up clearly refer

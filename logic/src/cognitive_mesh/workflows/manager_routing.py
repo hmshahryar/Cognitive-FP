@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from cognitive_mesh.agents.schemas import ManagerDecision
+from cognitive_mesh.integrations.gmail import ADDRESS
 from cognitive_mesh.integrations.google_sheets import CELL
 from cognitive_mesh.services.active_items import ActiveItems
 from cognitive_mesh.workflows.calendar_commands import (
@@ -21,6 +22,7 @@ from cognitive_mesh.workflows.calendar_commands import (
 )
 from cognitive_mesh.workflows.calendar_time import find_date, find_duration, find_times
 from cognitive_mesh.workflows.command_router import Route, find_platforms
+from cognitive_mesh.workflows.crm_commands import CrmCommand, crm_provider_in, finalize_crm
 from cognitive_mesh.workflows.email_commands import email_from_text
 from cognitive_mesh.workflows.sheet_commands import (
     DEFAULT_SHEET_NAME,
@@ -28,6 +30,7 @@ from cognitive_mesh.workflows.sheet_commands import (
     finalize_sheet,
 )
 
+EMAIL = re.compile(ADDRESS)
 _WORD = re.compile(r"[a-z]+")
 _NUMBER = re.compile(r"\d+")
 _MIN_WORD_MATCH = 0.7
@@ -157,6 +160,39 @@ def _sheet_route(decision: ManagerDecision, message: str, active: ActiveItems) -
     return Route("sheets", ("googlesheets",), sheet=finalize_sheet(command))
 
 
+def _crm_route(decision: ManagerDecision, message: str) -> Route | None:
+    """Contact details must appear in the user's message, so none can be invented."""
+    kinds = {"crm_find": "find", "crm_create": "create", "crm_update": "update", "crm_note": "note"}
+    kind = kinds.get(decision.action)
+    if kind is None:
+        return None
+    wanted = decision.contact_email.strip().lower()
+    email = wanted if wanted and wanted in message.lower() and EMAIL.fullmatch(wanted) else None
+    fields = [
+        (field, " ".join(value.split()))
+        for field, value in (
+            ("firstname", decision.first_name), ("lastname", decision.last_name),
+            ("phone", decision.phone), ("company", decision.company),
+            ("jobtitle", decision.job_title),
+        )
+        if value.strip() and _in_message(value, message)
+    ]
+    if kind == "create" and email:
+        fields.insert(0, ("email", email))
+    note = " ".join(decision.note_text.split())
+    query = " ".join(decision.contact_query.split())
+    command = CrmCommand(
+        kind,  # type: ignore[arg-type]
+        email=email,
+        query=query if query and _in_message(query, message) else None,
+        fields=tuple(fields) if kind in ("create", "update") else (),
+        note=note if kind == "note" and note and _in_message(note, message) else None,
+        provider=crm_provider_in(message, kind),
+    )
+    platforms = (command.provider,) if command.provider else ()
+    return Route("crm", platforms, crm=finalize_crm(command))
+
+
 def route_from_decision(
     decision: ManagerDecision, message: str, active: ActiveItems | None = None
 ) -> tuple[Route, str | None]:
@@ -166,6 +202,10 @@ def route_from_decision(
         return Route("unsupported"), " ".join(decision.question.split())
     if decision.target == "sheets":
         route = _sheet_route(decision, message, items)
+        if route is not None:
+            return route, None
+    if decision.target == "crm":
+        route = _crm_route(decision, message)
         if route is not None:
             return route, None
     if decision.target == "calendar":

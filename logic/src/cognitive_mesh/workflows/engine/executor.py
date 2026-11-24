@@ -227,7 +227,7 @@ async def _reserve(
     resolved: dict | None = None
     if action is None or action.tool_slug != step.tool_slug or action.toolkit != step.toolkit_slug:
         problem = "This step is not for a supported action"
-    elif connection is None or not set(connection.granted_scopes or []) & set(action.any_scopes):
+    elif connection is None or not action.is_permitted(set(connection.granted_scopes or [])):
         problem = f"{action.app} permission is missing. Reconnect {action.app}."
     else:
         outputs = {
