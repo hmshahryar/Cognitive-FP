@@ -2,32 +2,45 @@
 
 import { useActionState } from "react";
 
-import { cancelTaskAction, retryTaskAction, type FormState } from "@/app/command/actions";
+import { cancelTaskAction, retryTaskAction, type FormState } from "@/app/(app)/command/actions";
 import { Button } from "@/components/ui/button";
 import type { Task, TaskStatus } from "@/lib/command";
+import { cn } from "@/lib/utils";
 
 const LABEL: Record<TaskStatus, string> = {
   QUEUED: "Queued",
-  RUNNING: "In progress",
+  RUNNING: "Working",
   AWAITING_APPROVAL: "Needs your approval",
   APPROVED: "Approved",
   EXECUTING: "Running",
-  COMPLETED: "Completed",
+  COMPLETED: "Done",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
   REJECTED: "Rejected",
 };
 
 const TONE: Record<TaskStatus, string> = {
-  QUEUED: "bg-muted text-foreground",
-  RUNNING: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  AWAITING_APPROVAL: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  APPROVED: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  EXECUTING: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  COMPLETED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  FAILED: "bg-red-500/15 text-red-700 dark:text-red-400",
+  QUEUED: "bg-muted text-muted-foreground",
+  RUNNING: "bg-indigo-wash text-indigo-deep",
+  AWAITING_APPROVAL: "bg-amber-wash text-amber-700",
+  APPROVED: "bg-indigo-wash text-indigo-deep",
+  EXECUTING: "bg-indigo-wash text-indigo-deep",
+  COMPLETED: "bg-mint-wash text-emerald-700",
+  FAILED: "bg-coral-wash text-[#b23a1f]",
   CANCELLED: "bg-muted text-muted-foreground",
   REJECTED: "bg-muted text-muted-foreground",
+};
+
+const DOT: Record<TaskStatus, string> = {
+  QUEUED: "bg-muted-foreground/40",
+  RUNNING: "bg-indigo animate-pulse",
+  AWAITING_APPROVAL: "bg-amber",
+  APPROVED: "bg-indigo animate-pulse",
+  EXECUTING: "bg-indigo animate-pulse",
+  COMPLETED: "bg-mint",
+  FAILED: "bg-coral",
+  CANCELLED: "bg-muted-foreground/40",
+  REJECTED: "bg-muted-foreground/40",
 };
 
 const CANCELLABLE = new Set<TaskStatus>(["QUEUED", "RUNNING", "AWAITING_APPROVAL", "APPROVED"]);
@@ -53,20 +66,32 @@ export function TaskCard({
   const error = cancelState.error ?? retryState.error;
 
   return (
-    <article className="flex flex-col gap-3 rounded-lg border p-4">
+    <article className="relative flex flex-col gap-2.5 pl-6">
+      {/* Timeline dot */}
+      <span
+        aria-hidden
+        className={cn("absolute top-1.5 left-0 size-2.5 rounded-full ring-4 ring-background", DOT[task.status])}
+      />
       <div className="flex items-start justify-between gap-3">
-        <p className="line-clamp-2 text-sm">{task.request}</p>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${TONE[task.status]}`}>
+        <p className="line-clamp-2 text-sm leading-snug font-medium">{task.request}</p>
+        <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", TONE[task.status])}>
           {LABEL[task.status]}
         </span>
       </div>
-      {task.route_label && (
-        <p className="text-xs text-muted-foreground">Routed to {task.route_label}</p>
-      )}
-      <div className="flex items-center justify-between gap-2">
-        <time className="text-xs text-muted-foreground" dateTime={task.created_at}>
-          {new Date(task.created_at).toLocaleString()}
+      <p className="text-xs text-muted-foreground">
+        {task.route_label && <>Handled by {task.route_label}. </>}
+        {/* Local time; the server can't know the viewer's zone, so this may differ on first paint. */}
+        <time dateTime={task.created_at} suppressHydrationWarning>
+          {new Date(task.created_at).toLocaleString([], {
+            day: "numeric",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
         </time>
+      </p>
+      {children}
+      {(CANCELLABLE.has(task.status) || (canRetry && RETRYABLE.has(task.status))) && (
         <div className="flex gap-2">
           {CANCELLABLE.has(task.status) && (
             <form action={cancel}>
@@ -83,10 +108,9 @@ export function TaskCard({
             </form>
           )}
         </div>
-      </div>
-      {children}
+      )}
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-[#b23a1f]">
           {error}
         </p>
       )}

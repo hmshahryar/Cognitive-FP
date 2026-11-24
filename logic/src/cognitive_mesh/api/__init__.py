@@ -7,6 +7,7 @@ from cognitive_mesh.api import (
     health,
     me,
     memories,
+    onboarding,
     tasks,
     workflow_runs,
     workspaces,
@@ -21,4 +22,5 @@ api_router.include_router(chats.router)
 api_router.include_router(tasks.router)
 api_router.include_router(approvals.router)
 api_router.include_router(memories.router)
+api_router.include_router(onboarding.router)
 api_router.include_router(workflow_runs.router)

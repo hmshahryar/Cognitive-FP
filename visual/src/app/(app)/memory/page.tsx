@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+
+import { requireOnboarded } from "@/lib/onboarding";
 import { Suspense } from "react";
 
 import { MemoryRow } from "@/components/memory/memory-row";
@@ -37,7 +39,8 @@ async function MemoryList() {
   );
 }
 
-export default function MemoryPage() {
+export default async function MemoryPage() {
+  await requireOnboarded();
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6">
       <header className="flex flex-col gap-1">

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { Check, RotateCw } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { completeConnection } from "@/lib/connectors";
+import { getOnboarding } from "@/lib/onboarding";
 
 export const metadata: Metadata = { title: "Connecting… · Cognitive Mesh" };
 
@@ -49,15 +50,30 @@ async function Result({ searchParams }: { searchParams: Search }) {
     }
   }
 
+  // Mid-setup users go back to onboarding instead of the Connectors page.
+  const inSetup = await getOnboarding()
+    .then((o) => !o.completed)
+    .catch(() => false);
+
+  const target = inSetup ? "/onboarding?step=connect" : "/connectors";
   return (
-    <section className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl border p-8 text-center">
+    <section className="flex w-full max-w-md flex-col items-center gap-4 rounded-3xl border bg-card p-10 text-center shadow-[0_24px_60px_-34px_rgba(55,48,163,0.45)]">
       <span
-        className={`size-3 rounded-full ${ok ? "bg-emerald-500" : "bg-amber-500"}`}
+        className={`flex size-14 items-center justify-center rounded-full text-white ${
+          ok ? "bg-mint shadow-[0_4px_0_#0a8a60]" : "bg-amber shadow-[0_4px_0_#c27c05]"
+        }`}
         aria-hidden
-      />
-      <h1 className="text-xl font-semibold">{title}</h1>
+      >
+        {ok ? <Check className="size-7" strokeWidth={3} /> : <RotateCw className="size-6" strokeWidth={2.5} />}
+      </span>
+      <h1 className="heading mt-2 text-2xl">{title}</h1>
       <p className="text-muted-foreground">{detail}</p>
-      <Button render={<Link href="/connectors" />}>Back to Connectors</Button>
+      <Link
+        href={target}
+        className="mt-2 inline-flex h-11 items-center rounded-xl bg-indigo px-5 font-medium text-white shadow-[0_3px_0_var(--indigo-deep)] hover:bg-indigo-deep active:translate-y-px active:shadow-none"
+      >
+        {inSetup ? "Continue setup" : "Back to Connectors"}
+      </Link>
     </section>
   );
 }

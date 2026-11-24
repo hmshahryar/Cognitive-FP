@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 
-import { deleteMemoryAction, type MemoryActionState } from "@/app/memory/actions";
+import { deleteMemoryAction, type MemoryActionState } from "@/app/(app)/memory/actions";
 import { Button } from "@/components/ui/button";
 import type { Memory } from "@/lib/memory";
 

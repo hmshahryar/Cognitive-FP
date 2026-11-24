@@ -202,7 +202,7 @@ export function PublicationStatus({ publication }: { publication: Publication | 
 
   if (publication.status === "PUBLISHED") {
     return (
-      <p className="text-xs text-emerald-700 dark:text-emerald-400">
+      <p className="text-xs text-emerald-700">
         {copy.done}
         {publication.external_url?.startsWith(copy.prefix) && (
           <>
@@ -229,7 +229,7 @@ export function PublicationStatus({ publication }: { publication: Publication | 
   }
   if (publication.status === "NEEDS_CHECK") {
     return (
-      <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">
+      <p role="alert" className="text-xs text-amber-700">
         Result unknown. {copy.check} It will not be repeated automatically.
       </p>
     );

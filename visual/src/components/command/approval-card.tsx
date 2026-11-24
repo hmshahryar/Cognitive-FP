@@ -8,7 +8,7 @@ import {
   rejectAction,
   requestChangesAction,
   type FormState,
-} from "@/app/command/actions";
+} from "@/app/(app)/command/actions";
 import { CalendarApprovalDetails } from "@/components/command/calendar-approval-details";
 import { CrmApprovalDetails } from "@/components/command/crm-approval-details";
 import { EmailApprovalDetails } from "@/components/command/email-approval-details";
@@ -224,14 +224,22 @@ export function ApprovalCard({
   return (
     <section
       aria-label="Approval required"
-      className="flex flex-col gap-4 rounded-xl border-2 border-amber-500/50 bg-amber-500/5 p-5"
+      className="relative flex flex-col gap-4 overflow-hidden rounded-2xl border bg-card p-5 shadow-[0_24px_60px_-34px_rgba(55,48,163,0.45)] before:absolute before:inset-x-0 before:top-0 before:h-1 before:bg-amber sm:p-6"
     >
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold">{copy.title}</h2>
-        <span className="text-xs text-muted-foreground">
-          Version {approval.content_version} · fingerprint{" "}
-          <code title={approval.payload_hash}>{approval.payload_hash.slice(0, 12)}</code>
+      <header className="flex flex-col gap-2">
+        <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-amber-wash px-2.5 py-0.5 text-xs font-medium text-amber-700">
+          <span className="size-1.5 rounded-full bg-amber" aria-hidden />
+          Waiting for your approval
         </span>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="heading text-xl">{copy.title}</h2>
+          <span className="text-xs text-muted-foreground">
+            Version {approval.content_version}, fingerprint{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono" title={approval.payload_hash}>
+              {approval.payload_hash.slice(0, 12)}
+            </code>
+          </span>
+        </div>
       </header>
 
       {approval.action_type === "linkedin.publish_post" ? (
@@ -241,7 +249,7 @@ export function ApprovalCard({
             {copy.note} Any change creates a new version that needs your approval again.
           </p>
 
-          <blockquote className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background p-4 text-sm">
+          <blockquote className="max-h-96 overflow-y-auto rounded-xl border border-dashed bg-background p-4 text-[15px] leading-relaxed whitespace-pre-wrap">
             {approval.payload.commentary}
           </blockquote>
 
@@ -254,7 +262,7 @@ export function ApprovalCard({
                 <label
                   key={v}
                   className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm ${
-                    approval.payload.visibility === v ? "border-primary bg-primary/5" : ""
+                    approval.payload.visibility === v ? "border-indigo bg-indigo-wash" : "bg-card"
                   }`}
                 >
                   <input
@@ -307,8 +315,9 @@ export function ApprovalCard({
         </>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 border-t pt-4">
         <Button
+          size="lg"
           disabled={busy}
           onClick={() =>
             run(() => approveAction(approval.id, approval.payload_hash, approval.content_version))
@@ -317,11 +326,17 @@ export function ApprovalCard({
           {pending ? "Working…" : copy.button}
         </Button>
         {copy.canRevise && (
-          <Button variant="outline" disabled={busy} onClick={() => setShowChanges((s) => !s)}>
+          <Button size="lg" variant="outline" disabled={busy} onClick={() => setShowChanges((s) => !s)}>
             Request changes
           </Button>
         )}
-        <Button variant="ghost" disabled={busy} onClick={() => run(() => rejectAction(approval.id))}>
+        <Button
+          size="lg"
+          variant="ghost"
+          disabled={busy}
+          className="text-muted-foreground hover:text-[#b23a1f]"
+          onClick={() => run(() => rejectAction(approval.id))}
+        >
           Reject
         </Button>
       </div>
@@ -346,7 +361,7 @@ export function ApprovalCard({
       )}
 
       {(error ?? changesState.error) && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="rounded-lg bg-coral-wash px-3 py-2 text-sm text-[#b23a1f]">
           {error ?? changesState.error}
         </p>
       )}

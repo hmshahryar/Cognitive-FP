@@ -1,83 +1,64 @@
-import {
-  ClerkProvider,
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-} from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
-import { Suspense } from "react";
-import { Button } from "@/components/ui/button";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
+import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument-serif",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
 });
 
 export const metadata: Metadata = {
   title: "Cognitive Mesh",
-  description: "Autonomous AI employees for your workspace",
+  description: "AI employees that prepare the work and wait for your approval before they act.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <ClerkProvider appearance={{ theme: shadcn }}>
-          <header className="flex items-center gap-3 border-b px-6 py-3">
-            <Link href="/" className="font-semibold tracking-tight">
-              Cognitive Mesh
-            </Link>
-            <nav className="flex flex-1 items-center gap-1 text-sm">
-              <Suspense>
-                <Show when="signed-in">
-                  <Link
-                    href="/command"
-                    className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    Command Center
-                  </Link>
-                  <Link
-                    href="/connectors"
-                    className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    Connectors
-                  </Link>
-                  <Link
-                    href="/memory"
-                    className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    Memory
-                  </Link>
-                </Show>
-              </Suspense>
-            </nav>
-            <Suspense>
-              <Show when="signed-out">
-                <SignInButton>
-                  <Button variant="ghost">Sign in</Button>
-                </SignInButton>
-                <SignUpButton>
-                  <Button>Sign up</Button>
-                </SignUpButton>
-              </Show>
-              <Show when="signed-in">
-                <UserButton />
-              </Show>
-            </Suspense>
-          </header>
+      <body className="flex min-h-full flex-col bg-background text-foreground">
+        <ClerkProvider
+          localization={{
+            signIn: {
+              start: {
+                title: "Sign in to Cognitive Mesh",
+                titleCombined: "Sign in to Cognitive Mesh",
+                subtitle: "Use the account you signed up with.",
+                subtitleCombined: "Use the account you signed up with.",
+              },
+            },
+            signUp: {
+              start: {
+                title: "Create your workspace",
+                titleCombined: "Create your workspace",
+                subtitle: "Start with Google or your email address.",
+                subtitleCombined: "Start with Google or your email address.",
+              },
+            },
+          }}
+          appearance={{
+            theme: shadcn,
+            variables: {
+              colorPrimary: "#4f46e5",
+              colorForeground: "#16161d",
+              colorMutedForeground: "#6b6b76",
+              colorBackground: "#ffffff",
+              colorInput: "#ffffff",
+              colorBorder: "#dedbd4",
+              colorRing: "#4f46e5",
+              fontFamily: "var(--font-geist-sans)",
+              borderRadius: "0.75rem",
+            },
+          }}
+        >
           {children}
         </ClerkProvider>
       </body>

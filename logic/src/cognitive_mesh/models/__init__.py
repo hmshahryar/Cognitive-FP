@@ -9,6 +9,7 @@ from cognitive_mesh.models.connection import (
 )
 from cognitive_mesh.models.draft import ContentDraft
 from cognitive_mesh.models.memory import ChatMemory
+from cognitive_mesh.models.onboarding import WorkspaceProfile
 from cognitive_mesh.models.publication import Publication, PublicationStatus
 from cognitive_mesh.models.user import User
 from cognitive_mesh.models.work import Chat, Execution, Message, MessageRole, Task, TaskStatus
@@ -44,4 +45,5 @@ __all__ = [
     "WorkflowStep",
     "WorkflowStepStatus",
     "Workspace",
+    "WorkspaceProfile",
 ]
